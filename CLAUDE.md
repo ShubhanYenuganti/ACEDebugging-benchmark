@@ -579,3 +579,117 @@ This stderr stream is tailed by the Phase C runner to build `tool_call_trace.jso
 
 #### `tests/test_mcp_server.js`
 Node built-in test runner (`node:test`). `before()` hook creates LocalStack fixtures idempotently. 15 tests covering all 14 tools plus error/authorization paths.
+
+---
+
+### Phase C — Complete ✅
+
+Gate: `pytest tests/test_runner.py` — **8/8 passing**
+
+#### `harness/runner/context_builder.py`
+Exports `build_context(scenario_dir: str) -> dict`.
+
+- Raises `ValueError` if `fault_manifest.json` is present inside `scenario_dir` (prevents manifest leaking to the model)
+- Reads `scenario.md` as `scenario_brief`
+- Calls `_get_stack_outputs()` which queries CloudFormation for the deployed stack's outputs; returns `{}` on `ClientError`
+- Returns absolute paths for `template_path` and `deployment_dir`
+- Fixed instruction text is a module-level constant (`_FIXED_INSTRUCTION`)
+- Return shape: `{scenario_brief, template_path, deployment_dir, stack_outputs, instruction}`
+- `_STACK_NAME` imported from `deployment_handler` (single source of truth)
+
+#### `harness/runner/deployment_handler.py`
+Exports `handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict) -> dict`.
+
+Constants:
+- `_STACK_NAME = "ace-bench-stack"` — imported by `context_builder` and `scenario_runner`
+- `_ARTIFACT_BUCKET = "ace-bench-artifacts"`
+
+Execution pipeline (four steps):
+1. **Snapshot diff** — calls `snapshot(deployment_dir)`, then `diff_snapshots(start, end, dir)`, then `log_file_change(run_id, diff)`
+2. **cfn-lint gate** — calls `run_lint(template_path)`; returns `{outcome: "lint_fail", errors: [...]}` immediately if `passed=False`
+3. **Lambda packaging** — for each `.py` file under `deployment/lambda/` that was added or modified: zips it, uploads to S3 (`ace-bench-artifacts`), rewrites `old-handler.zip` key in template body
+4. **CloudFormation update** — calls `cf_client.update_stack` with `CAPABILITY_IAM`; waits via `stack_update_complete` waiter; returns `{outcome: "deploy_success"}` on success or `{outcome: "deploy_fail", events: [...]}` on `WaiterError`
+
+#### `harness/runner/scenario_runner.py`
+Exports `ScenarioRunner` class.
+
+`__init__(scenario_dir, run_id)`:
+- Calls `init_run(run_id, scenario_id)` and `snapshot(deployment_dir)` to capture `start_snapshot`
+- Initializes `tool_call_count = 0`, `submitted = False`, and a `threading.Lock`
+
+`start()`:
+- Runs `localstack-deployer create-stack` via subprocess with `timeout=300`
+- Raises `RuntimeError` on non-zero exit
+
+`intercept_tool_call(tool_name, input, output)`:
+- Increments `tool_call_count` under lock; captures turn number
+- Calls `log_tool_call(run_id, turn, tool_name, input, output, timestamp)`
+
+`on_model_redeploy() -> dict`:
+- First call: sets `submitted = True` under lock, delegates to `handle_submission`
+- Subsequent calls: returns `{outcome: "already_submitted"}` immediately (idempotent gate)
+
+#### `tests/test_runner.py`
+pytest with pytest-mock. 3 test classes, 8 tests total. No live LocalStack required — all boto3 calls and subprocess are mocked.
+
+---
+
+### Phase D — Complete ✅
+
+Gate: `pytest tests/test_verify.py` — **18/18 passing**
+
+#### `harness/verify/pass1_functional.py`
+Exports `run_pass1(corpus_dir: str) -> dict`.
+
+- Runs `corpus_dir/functional_test.py` via `sys.executable` subprocess
+- Parses stdout+stderr for lines matching `ASSERT (pass|fail) <name>: <message>`
+- `primary_assertions_passed`: `True` if no failed assertion name contains `_secondary`
+- `all_assertions_passed`: `True` if zero failures of any kind
+- Return shape: `{assertions, primary_assertions_passed, all_assertions_passed, failed_assertion_names}`
+
+#### `harness/verify/pass2_regression.py`
+Exports `run_pass2(scenario_dir: str, run_id: str, pass1_result: dict) -> dict`.
+
+- Loads `results/<run_id>/faulted_baseline.json` (written before scenario run)
+- Detects assertions that were `pass` in the baseline but are `fail` in `pass1_result` — these are regressions
+- Regressions on `_secondary` names are `non_critical`; all others are `critical`
+- Module-level `RESULTS_DIR = "results"` — patchable via `monkeypatch.setattr`
+- Return shape: `{regression_count, regressions, critical_regression_count, non_critical_regression_count}`
+
+#### `harness/verify/pass3_classification.py`
+Exports `run_pass3(scenario_dir: str, run_id: str, pass1_result: dict, manifest_path: str) -> dict`.
+
+Two signals evaluated:
+1. **Structural match** — navigates submitted YAML at `Resources.<target_resource>.<target_property>` (dot-path via `_navigate`) and compares to `manifest["original_value"]`
+2. **Invalid patch detection** — reads `results/<run_id>/file_change_log.json` diff text; checks for any substring from `manifest["invalid_patches"]`
+
+Classification logic:
+- `root_cause` — structural match AND no invalid patch
+- `workaround` — primary assertions passed AND no structural match
+- `partial` — primary assertions failed AND at least one assertion passed
+- `none` — primary assertions failed AND no improvement
+
+Module-level `RESULTS_DIR = "results"` — patchable. Return shape: `{structural_match, invalid_patch_detected, classification, root_cause_addressed}`
+
+#### `harness/verify/pass4_concurrency.py`
+Exports `run_pass4(scenario_dir: str, manifest_path: str, api_endpoint: str) -> dict`.
+
+- Reads `concurrency_probe_n` from manifest (default `10`)
+- Fires N concurrent `requests.post` calls via `ThreadPoolExecutor`
+- Classifies responses: `200 → success`, `429 → throttled`, `504 → timeout`, anything else → `error`
+- `passed = throttled_count == 0 and timeout_count == 0`
+- Return shape: `{requests_sent, success_count, throttled_count, timeout_count, error_count, passed}`
+
+#### `harness/verify/verify_loop.py`
+Exports `run_verify_loop(scenario_dir, run_id, deployment_outcome, manifest_path, corpus_dir, api_endpoint) -> dict`.
+
+- **Early exit**: if `deployment_outcome != "deploy_success"` returns `{outcome: "did_not_deploy"}` with all passes as `None` and writes via `log_verify_result`
+- Runs Pass 1 → Pass 2 → Pass 3 always (when deployed)
+- Pass 4 runs only when `manifest["fault_class"] in {"performance", "reliability"}`
+- **Override rule**: if Pass 4 runs and `passed=False` but `pass1.primary_assertions_passed=True`, downgrades Pass 3 classification to `"partial"` and sets `root_cause_addressed=False`
+- Calls `log_verify_result(run_id, result)` before returning
+- Module-level `RESULTS_DIR = "results"` and all pass functions are patchable at module level
+- Return shape: `{outcome, pass1_functional, pass2_regression, pass3_classification, pass4_concurrency}`
+
+#### `tests/test_verify.py`
+pytest with pytest-mock. 5 test classes, 18 tests total. All subprocess outputs and file fixtures are hand-crafted; no live LocalStack required.
