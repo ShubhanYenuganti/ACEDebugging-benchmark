@@ -146,3 +146,108 @@ class TestFileDiffer:
         result = diff_snapshots(before, after, "/unused")
         assert "a.py" not in result["per_file_line_changes"]
         assert "b.py" in result["per_file_line_changes"]
+
+
+import concurrent.futures
+import json
+from pathlib import Path
+
+import harness.shared.result_logger as rl
+from harness.shared.result_logger import (
+    init_run,
+    log_file_change,
+    log_tool_call,
+    log_verify_result,
+)
+
+
+class TestResultLogger:
+    def test_init_run_creates_directory_and_files(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rl, "RESULTS_DIR", str(tmp_path))
+        init_run("run-001", "arch01_fault01")
+        run_dir = tmp_path / "run-001"
+        assert run_dir.is_dir()
+        assert (run_dir / "scenario_id.txt").read_text() == "arch01_fault01"
+        assert json.loads((run_dir / "tool_call_trace.json").read_text()) == []
+
+    def test_log_tool_call_appends_entries_in_order(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rl, "RESULTS_DIR", str(tmp_path))
+        init_run("run-002", "arch01_fault01")
+        log_tool_call(
+            "run-002",
+            1,
+            "ace_invoke_lambda",
+            {"fn": "MyFunc"},
+            {"status": 200},
+            "2026-01-01T00:00:00Z",
+        )
+        log_tool_call(
+            "run-002",
+            2,
+            "ace_get_log_tail",
+            {"fn": "MyFunc"},
+            {"logs": []},
+            "2026-01-01T00:00:01Z",
+        )
+        data = json.loads((tmp_path / "run-002" / "tool_call_trace.json").read_text())
+        assert len(data) == 2
+        assert data[0]["tool"] == "ace_invoke_lambda"
+        assert data[0]["turn"] == 1
+        assert data[1]["tool"] == "ace_get_log_tail"
+        assert data[1]["turn"] == 2
+
+    def test_log_tool_call_concurrent_no_corruption(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rl, "RESULTS_DIR", str(tmp_path))
+        init_run("run-003", "arch01_fault01")
+
+        def write_entry(i: int) -> None:
+            log_tool_call(
+                "run-003",
+                i,
+                f"tool_{i}",
+                {"i": i},
+                {"ok": True},
+                f"2026-01-01T00:00:{i:02d}Z",
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(write_entry, i) for i in range(20)]
+            concurrent.futures.wait(futures)
+
+        data = json.loads((tmp_path / "run-003" / "tool_call_trace.json").read_text())
+        assert len(data) == 20
+
+    def test_log_file_change_writes_diff_dict(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rl, "RESULTS_DIR", str(tmp_path))
+        init_run("run-004", "arch01_fault01")
+        diff = {
+            "files_added": ["new.py"],
+            "files_modified": [],
+            "files_removed": [],
+            "total_files_changed": 1,
+            "per_file_line_changes": {
+                "new.py": {
+                    "lines_added": 5,
+                    "lines_modified": 0,
+                    "lines_removed": 0,
+                    "total_lines_changed": 5,
+                }
+            },
+            "total_lines_changed": 5,
+        }
+        log_file_change("run-004", diff)
+        written = json.loads(
+            (tmp_path / "run-004" / "file_change_log.json").read_text()
+        )
+        assert written == diff
+
+    def test_log_verify_result_writes_result_dict(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rl, "RESULTS_DIR", str(tmp_path))
+        init_run("run-005", "arch01_fault01")
+        result = {
+            "outcome": "completed",
+            "pass1_functional": {"all_assertions_passed": True},
+        }
+        log_verify_result("run-005", result)
+        written = json.loads((tmp_path / "run-005" / "verify_result.json").read_text())
+        assert written == result
