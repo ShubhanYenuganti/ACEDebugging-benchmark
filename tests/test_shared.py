@@ -78,3 +78,71 @@ class TestCfnLintRunner:
         monkeypatch.setattr("shutil.which", lambda _: None)
         with pytest.raises(EnvironmentError, match="cfn-lint is not installed"):
             run_lint("any.yaml")
+
+
+import os
+
+from harness.shared.file_differ import diff_snapshots, snapshot
+
+
+class TestFileDiffer:
+    def test_snapshot_returns_content_for_each_file(self, tmp_path):
+        (tmp_path / "a.py").write_text("line1\nline2\n")
+        (tmp_path / "b.py").write_text("hello\n")
+        result = snapshot(str(tmp_path))
+        assert set(result.keys()) == {"a.py", "b.py"}
+        assert result["a.py"] == "line1\nline2\n"
+        assert result["b.py"] == "hello\n"
+
+    def test_snapshot_uses_relative_paths_for_subdirectories(self, tmp_path):
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "handler.py").write_text("code\n")
+        result = snapshot(str(tmp_path))
+        expected_key = os.path.join("sub", "handler.py")
+        assert expected_key in result
+
+    def test_diff_added_files(self):
+        before = {}
+        after = {"new.py": "line1\nline2\n"}
+        result = diff_snapshots(before, after, "/unused")
+        assert result["files_added"] == ["new.py"]
+        assert result["files_modified"] == []
+        assert result["files_removed"] == []
+        assert result["total_files_changed"] == 1
+        assert result["per_file_line_changes"]["new.py"]["lines_added"] == 2
+        assert result["per_file_line_changes"]["new.py"]["lines_removed"] == 0
+        assert result["per_file_line_changes"]["new.py"]["lines_modified"] == 0
+        assert result["per_file_line_changes"]["new.py"]["total_lines_changed"] == 2
+        assert result["total_lines_changed"] == 2
+
+    def test_diff_removed_files(self):
+        before = {"old.py": "a\nb\nc\n"}
+        after = {}
+        result = diff_snapshots(before, after, "/unused")
+        assert result["files_removed"] == ["old.py"]
+        assert result["total_files_changed"] == 0  # removed files not counted
+        assert result["per_file_line_changes"]["old.py"]["lines_removed"] == 3
+        assert result["per_file_line_changes"]["old.py"]["lines_added"] == 0
+        assert result["total_lines_changed"] == 3
+
+    def test_diff_modified_files(self):
+        before = {"handler.py": "line1\nline2\nline3\n"}
+        after = {"handler.py": "line1\nline2_changed\nline3\nline4\n"}
+        result = diff_snapshots(before, after, "/unused")
+        assert result["files_modified"] == ["handler.py"]
+        assert result["total_files_changed"] == 1
+        changes = result["per_file_line_changes"]["handler.py"]
+        # line2 removed (1 removed); line2_changed + line4 added (2 added)
+        assert changes["lines_removed"] == 1
+        assert changes["lines_added"] == 2
+        assert changes["lines_modified"] == 0
+        assert changes["total_lines_changed"] == 3
+        assert result["total_lines_changed"] == 3
+
+    def test_diff_unchanged_files_have_no_entry_in_per_file(self):
+        before = {"a.py": "same\n", "b.py": "old\n"}
+        after = {"a.py": "same\n", "b.py": "new\n"}
+        result = diff_snapshots(before, after, "/unused")
+        assert "a.py" not in result["per_file_line_changes"]
+        assert "b.py" in result["per_file_line_changes"]
