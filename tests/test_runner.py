@@ -195,3 +195,50 @@ class TestDeploymentHandler:
         result = handle_submission(scenario_dir, "run-003", {})
         assert result["outcome"] == "deploy_fail"
         assert len(result["events"]) > 0
+
+
+import threading
+
+from harness.runner.scenario_runner import ScenarioRunner
+
+
+class TestScenarioRunner:
+    def _make_scenario(self, tmp_path):
+        scenario = tmp_path / "scenario"
+        scenario.mkdir()
+        (scenario / "scenario.md").write_text("Symptom: orders fail.")
+        (scenario / "faulted.yaml").write_text(
+            "AWSTemplateFormatVersion: '2010-09-09'\n"
+        )
+        deployment = scenario / "deployment"
+        deployment.mkdir()
+        (deployment / "handler.py").write_text("def handler(e,c): pass\n")
+        return str(scenario)
+
+    def test_submitted_flag_prevents_second_redeployment(self, tmp_path, mocker):
+        scenario_dir = self._make_scenario(tmp_path)
+        mocker.patch("harness.runner.scenario_runner.init_run")
+        mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+        mock_handle = mocker.patch(
+            "harness.runner.scenario_runner.handle_submission",
+            return_value={"outcome": "deploy_success"},
+        )
+        runner = ScenarioRunner(scenario_dir, "run-test-1")
+        result1 = runner.on_model_redeploy()
+        result2 = runner.on_model_redeploy()
+        assert result1["outcome"] == "deploy_success"
+        assert result2["outcome"] == "already_submitted"
+        assert mock_handle.call_count == 1
+
+    def test_intercept_tool_call_increments_count_and_logs(self, tmp_path, mocker):
+        scenario_dir = self._make_scenario(tmp_path)
+        mocker.patch("harness.runner.scenario_runner.init_run")
+        mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+        mock_log = mocker.patch("harness.runner.scenario_runner.log_tool_call")
+        runner = ScenarioRunner(scenario_dir, "run-test-2")
+        runner.intercept_tool_call("ace_invoke_lambda", {"fn": "MyFn"}, {"status": 200})
+        runner.intercept_tool_call("ace_get_log_tail", {"fn": "MyFn"}, {"logs": []})
+        assert runner.tool_call_count == 2
+        assert mock_log.call_count == 2
+        first_call_args = mock_log.call_args_list[0]
+        assert first_call_args.args[2] == "ace_invoke_lambda"
