@@ -248,3 +248,78 @@ class TestPass3Classification:
         }
         result = run_pass3(scenario_dir, "run-p3-4", pass1_result, manifest_path)
         assert result["classification"] in ("partial", "none")
+
+
+from unittest.mock import MagicMock, patch
+
+from harness.verify.pass4_concurrency import run_pass4
+
+
+class TestPass4Concurrency:
+    def _make_manifest(self, tmp_path, run_id, manifest: dict):
+        path = tmp_path / f"manifest_{run_id}.json"
+        path.write_text(json.dumps(manifest))
+        return str(path)
+
+    def _mock_post(self, status_code):
+        r = MagicMock()
+        r.status_code = status_code
+        return r
+
+    def test_all_success_returns_passed_true(self, tmp_path):
+        manifest_path = self._make_manifest(
+            tmp_path, "p4-1", {"fault_class": "reliability", "concurrency_probe_n": 5}
+        )
+        with patch(
+            "harness.verify.pass4_concurrency.requests.post",
+            return_value=self._mock_post(200),
+        ):
+            result = run_pass4("scenario", manifest_path, "http://localhost:4566/test")
+        assert result["requests_sent"] == 5
+        assert result["success_count"] == 5
+        assert result["throttled_count"] == 0
+        assert result["timeout_count"] == 0
+        assert result["passed"] is True
+
+    def test_throttled_response_sets_passed_false(self, tmp_path):
+        manifest_path = self._make_manifest(
+            tmp_path, "p4-2", {"fault_class": "performance", "concurrency_probe_n": 4}
+        )
+        responses = [200, 200, 429, 200]
+        idx = [0]
+
+        def mock_post(*a, **kw):
+            r = MagicMock()
+            r.status_code = responses[idx[0] % len(responses)]
+            idx[0] += 1
+            return r
+
+        with patch(
+            "harness.verify.pass4_concurrency.requests.post", side_effect=mock_post
+        ):
+            result = run_pass4("scenario", manifest_path, "http://localhost:4566/test")
+        assert result["throttled_count"] == 1
+        assert result["passed"] is False
+
+    def test_timeout_response_sets_passed_false(self, tmp_path):
+        manifest_path = self._make_manifest(
+            tmp_path, "p4-3", {"fault_class": "reliability", "concurrency_probe_n": 3}
+        )
+        with patch(
+            "harness.verify.pass4_concurrency.requests.post",
+            return_value=self._mock_post(504),
+        ):
+            result = run_pass4("scenario", manifest_path, "http://localhost:4566/test")
+        assert result["timeout_count"] == 3
+        assert result["passed"] is False
+
+    def test_uses_default_n_10_when_field_absent(self, tmp_path):
+        manifest_path = self._make_manifest(
+            tmp_path, "p4-4", {"fault_class": "reliability"}
+        )
+        with patch(
+            "harness.verify.pass4_concurrency.requests.post",
+            return_value=self._mock_post(200),
+        ):
+            result = run_pass4("scenario", manifest_path, "http://localhost:4566/test")
+        assert result["requests_sent"] == 10
