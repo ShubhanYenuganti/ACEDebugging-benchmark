@@ -2,6 +2,7 @@ import json
 import os
 
 import pytest
+
 from harness.runner.context_builder import build_context
 
 _FIXED_INSTRUCTION = (
@@ -64,3 +65,133 @@ class TestContextBuilder:
         ctx = build_context(scenario_dir)
         assert os.path.isabs(ctx["template_path"])
         assert os.path.isabs(ctx["deployment_dir"])
+
+
+import zipfile
+from unittest.mock import MagicMock
+
+from harness.runner.deployment_handler import handle_submission
+
+
+class TestDeploymentHandler:
+    def _make_scenario(self, tmp_path):
+        scenario = tmp_path / "scenario"
+        scenario.mkdir()
+        (scenario / "faulted.yaml").write_text(
+            "AWSTemplateFormatVersion: '2010-09-09'\n"
+            "Resources:\n"
+            "  MyFn:\n"
+            "    Type: AWS::Lambda::Function\n"
+            "    Properties:\n"
+            "      S3Key: old-handler.zip\n"
+        )
+        deployment = scenario / "deployment"
+        deployment.mkdir()
+        lam = deployment / "lambda"
+        lam.mkdir()
+        (lam / "handler.py").write_text("def handler(e,c): return 200\n")
+        return str(scenario)
+
+    def test_returns_lint_fail_on_fatal_errors(self, tmp_path, mocker):
+        scenario_dir = self._make_scenario(tmp_path)
+        mocker.patch(
+            "harness.runner.deployment_handler.run_lint",
+            return_value={
+                "passed": False,
+                "fatal_errors": [
+                    {"rule": "E3001", "message": "bad", "location": "line 1"}
+                ],
+            },
+        )
+        mocker.patch("harness.runner.deployment_handler.snapshot", return_value={})
+        mocker.patch(
+            "harness.runner.deployment_handler.diff_snapshots",
+            return_value={
+                "files_added": [],
+                "files_modified": ["deployment/lambda/handler.py"],
+                "files_removed": [],
+                "total_files_changed": 1,
+                "per_file_line_changes": {},
+                "total_lines_changed": 0,
+            },
+        )
+        mocker.patch("harness.runner.deployment_handler.log_file_change")
+        result = handle_submission(scenario_dir, "run-001", {})
+        assert result["outcome"] == "lint_fail"
+        assert len(result["errors"]) == 1
+
+    def test_packaging_preflight_zips_and_uploads_lambda(self, tmp_path, mocker):
+        scenario_dir = self._make_scenario(tmp_path)
+        mocker.patch(
+            "harness.runner.deployment_handler.run_lint",
+            return_value={"passed": True, "fatal_errors": [], "warnings": []},
+        )
+        mocker.patch("harness.runner.deployment_handler.snapshot", return_value={})
+        mocker.patch(
+            "harness.runner.deployment_handler.diff_snapshots",
+            return_value={
+                "files_added": [],
+                "files_modified": [os.path.join("deployment", "lambda", "handler.py")],
+                "files_removed": [],
+                "total_files_changed": 1,
+                "per_file_line_changes": {},
+                "total_lines_changed": 0,
+            },
+        )
+        mocker.patch("harness.runner.deployment_handler.log_file_change")
+        mock_s3 = MagicMock()
+        mock_cf = MagicMock()
+        mock_cf.update_stack.return_value = {}
+        mock_cf.describe_stack_events.return_value = {"StackEvents": []}
+        mock_waiter = MagicMock()
+        mock_cf.get_waiter.return_value = mock_waiter
+        mocker.patch("harness.runner.deployment_handler.s3_client", mock_s3)
+        mocker.patch("harness.runner.deployment_handler.cf_client", mock_cf)
+        handle_submission(scenario_dir, "run-002", {})
+        assert mock_s3.put_object.called
+        call_kwargs = mock_s3.put_object.call_args.kwargs
+        assert call_kwargs["Bucket"] == "ace-bench-artifacts"
+        assert call_kwargs["Key"].endswith(".zip")
+
+    def test_deploy_fail_returns_rollback_outcome(self, tmp_path, mocker):
+        scenario_dir = self._make_scenario(tmp_path)
+        mocker.patch(
+            "harness.runner.deployment_handler.run_lint",
+            return_value={"passed": True, "fatal_errors": [], "warnings": []},
+        )
+        mocker.patch("harness.runner.deployment_handler.snapshot", return_value={})
+        mocker.patch(
+            "harness.runner.deployment_handler.diff_snapshots",
+            return_value={
+                "files_added": [],
+                "files_modified": [],
+                "files_removed": [],
+                "total_files_changed": 0,
+                "per_file_line_changes": {},
+                "total_lines_changed": 0,
+            },
+        )
+        mocker.patch("harness.runner.deployment_handler.log_file_change")
+        from botocore.exceptions import WaiterError
+
+        mock_cf = MagicMock()
+        mock_cf.update_stack.return_value = {}
+        mock_waiter = MagicMock()
+        mock_waiter.wait.side_effect = WaiterError(
+            "update_complete", "Waiter failed", None
+        )
+        mock_cf.get_waiter.return_value = mock_waiter
+        mock_cf.describe_stack_events.return_value = {
+            "StackEvents": [
+                {
+                    "LogicalResourceId": "MyFn",
+                    "ResourceStatus": "UPDATE_ROLLBACK_COMPLETE",
+                    "ResourceStatusReason": "Resource creation cancelled",
+                }
+            ]
+        }
+        mocker.patch("harness.runner.deployment_handler.cf_client", mock_cf)
+        mocker.patch("harness.runner.deployment_handler.s3_client", MagicMock())
+        result = handle_submission(scenario_dir, "run-003", {})
+        assert result["outcome"] == "deploy_fail"
+        assert len(result["events"]) > 0
