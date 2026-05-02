@@ -323,3 +323,119 @@ class TestPass4Concurrency:
         ):
             result = run_pass4("scenario", manifest_path, "http://localhost:4566/test")
         assert result["requests_sent"] == 10
+
+
+import harness.verify.verify_loop as vlmod
+from harness.verify.verify_loop import run_verify_loop
+
+
+class TestVerifyLoop:
+    def _write_baseline(self, results_dir, run_id, assertions):
+        run_dir = Path(results_dir) / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        baseline = {
+            "assertions": {
+                n: {"result": v, "message": ""} for n, v in assertions.items()
+            }
+        }
+        (run_dir / "faulted_baseline.json").write_text(json.dumps(baseline))
+
+    def test_did_not_deploy_skips_all_passes(self, tmp_path, monkeypatch):
+        results_dir = str(tmp_path / "results")
+        self._write_baseline(results_dir, "run-v1", {})
+        monkeypatch.setattr(vlmod, "RESULTS_DIR", results_dir)
+        monkeypatch.setattr(vlmod, "log_verify_result", lambda *a, **kw: None)
+        result = run_verify_loop("scenario", "run-v1", deployment_outcome="lint_fail")
+        assert result["outcome"] == "did_not_deploy"
+        assert result["pass1_functional"] is None
+        assert result["pass2_regression"] is None
+        assert result["pass3_classification"] is None
+        assert result["pass4_concurrency"] is None
+
+    def test_pass4_skipped_for_non_performance_fault_class(self, tmp_path, monkeypatch):
+        results_dir = str(tmp_path / "results")
+        self._write_baseline(results_dir, "run-v2", {"check_a": "fail"})
+        monkeypatch.setattr(vlmod, "RESULTS_DIR", results_dir)
+        monkeypatch.setattr(vlmod, "log_verify_result", lambda *a, **kw: None)
+        pass1 = {
+            "assertions": {"check_a": {"result": "pass", "message": ""}},
+            "primary_assertions_passed": True,
+            "all_assertions_passed": True,
+            "failed_assertion_names": [],
+        }
+        pass2 = {
+            "regression_count": 0,
+            "regressions": [],
+            "critical_regression_count": 0,
+            "non_critical_regression_count": 0,
+        }
+        pass3 = {
+            "structural_match": True,
+            "invalid_patch_detected": False,
+            "classification": "root_cause",
+            "root_cause_addressed": True,
+        }
+        monkeypatch.setattr(vlmod, "run_pass1", lambda *a, **kw: pass1)
+        monkeypatch.setattr(vlmod, "run_pass2", lambda *a, **kw: pass2)
+        monkeypatch.setattr(vlmod, "run_pass3", lambda *a, **kw: pass3)
+        manifest_path = str(tmp_path / "manifest.json")
+        Path(manifest_path).write_text(json.dumps({"fault_class": "config"}))
+        result = run_verify_loop(
+            "scenario",
+            "run-v2",
+            deployment_outcome="deploy_success",
+            manifest_path=manifest_path,
+            corpus_dir="corpus",
+            api_endpoint="http://localhost:4566",
+        )
+        assert result["pass4_concurrency"] is None
+
+    def test_pass4_failure_overrides_pass3_to_partial(self, tmp_path, monkeypatch):
+        results_dir = str(tmp_path / "results")
+        self._write_baseline(results_dir, "run-v3", {"check_a": "fail"})
+        monkeypatch.setattr(vlmod, "RESULTS_DIR", results_dir)
+        monkeypatch.setattr(vlmod, "log_verify_result", lambda *a, **kw: None)
+        pass1 = {
+            "assertions": {"check_a": {"result": "pass", "message": ""}},
+            "primary_assertions_passed": True,
+            "all_assertions_passed": True,
+            "failed_assertion_names": [],
+        }
+        pass2 = {
+            "regression_count": 0,
+            "regressions": [],
+            "critical_regression_count": 0,
+            "non_critical_regression_count": 0,
+        }
+        pass3 = {
+            "structural_match": True,
+            "invalid_patch_detected": False,
+            "classification": "root_cause",
+            "root_cause_addressed": True,
+        }
+        pass4 = {
+            "requests_sent": 10,
+            "success_count": 7,
+            "throttled_count": 3,
+            "timeout_count": 0,
+            "error_count": 0,
+            "passed": False,
+        }
+        monkeypatch.setattr(vlmod, "run_pass1", lambda *a, **kw: pass1)
+        monkeypatch.setattr(vlmod, "run_pass2", lambda *a, **kw: pass2)
+        monkeypatch.setattr(vlmod, "run_pass3", lambda *a, **kw: pass3)
+        monkeypatch.setattr(vlmod, "run_pass4", lambda *a, **kw: pass4)
+        manifest_path = str(tmp_path / "manifest.json")
+        Path(manifest_path).write_text(
+            json.dumps({"fault_class": "reliability", "concurrency_probe_n": 10})
+        )
+        result = run_verify_loop(
+            "scenario",
+            "run-v3",
+            deployment_outcome="deploy_success",
+            manifest_path=manifest_path,
+            corpus_dir="corpus",
+            api_endpoint="http://localhost:4566",
+        )
+        assert result["pass3_classification"]["classification"] == "partial"
+        assert result["pass4_concurrency"]["passed"] is False
