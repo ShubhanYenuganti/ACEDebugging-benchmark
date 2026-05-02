@@ -1,0 +1,161 @@
+import { test, before } from "node:test";
+import assert from "node:assert/strict";
+import { LambdaClient, CreateFunctionCommand } from "@aws-sdk/client-lambda";
+import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
+import { SQSClient, CreateQueueCommand } from "@aws-sdk/client-sqs";
+import { CloudFormationClient, CreateStackCommand } from "@aws-sdk/client-cloudformation";
+import JSZip from "jszip";
+
+import { probeTools } from "../harness/mcp_server/tools/probe.js";
+import { observeTools } from "../harness/mcp_server/tools/observe.js";
+import { scoreTools } from "../harness/mcp_server/tools/score.js";
+
+const awsConfig = {
+  endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
+  region: "us-east-1",
+  credentials: { accessKeyId: "test", secretAccessKey: "test" },
+};
+
+const lambda = new LambdaClient(awsConfig);
+const dynamo = new DynamoDBClient(awsConfig);
+const sqs = new SQSClient(awsConfig);
+const cf = new CloudFormationClient(awsConfig);
+
+const FN = "test-identity-fn";
+const TABLE = "test-table";
+const QUEUE = "test-queue";
+
+function tool(list, name) {
+  return list.find(t => t.name === name);
+}
+
+before(async () => {
+  const zip = new JSZip();
+  zip.file("index.js", "exports.handler = async (e) => ({ statusCode: 200, body: JSON.stringify(e) });");
+  const zipBuf = await zip.generateAsync({ type: "nodebuffer" });
+
+  for (const op of [
+    () => lambda.send(new CreateFunctionCommand({
+      FunctionName: FN,
+      Runtime: "nodejs18.x",
+      Role: "arn:aws:iam::000000000000:role/test-role",
+      Handler: "index.handler",
+      Code: { ZipFile: zipBuf },
+    })),
+    () => dynamo.send(new CreateTableCommand({
+      TableName: TABLE,
+      KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }],
+      AttributeDefinitions: [{ AttributeName: "pk", AttributeType: "S" }],
+      BillingMode: "PAY_PER_REQUEST",
+    })),
+    () => sqs.send(new CreateQueueCommand({ QueueName: QUEUE })),
+    () => cf.send(new CreateStackCommand({
+      StackName: "ace-bench-stack",
+      TemplateBody: JSON.stringify({
+        AWSTemplateFormatVersion: "2010-09-09",
+        Outputs: { ApiEndpoint: { Value: "http://localhost:4566" } },
+        Resources: { Placeholder: { Type: "AWS::CloudFormation::WaitConditionHandle" } },
+      }),
+    })),
+  ]) {
+    try { await op(); } catch (e) { if (!e.message?.includes("already exist")) throw e; }
+  }
+});
+
+// Probe tools
+test("ace_invoke_lambda: returns status_code and response_body", async () => {
+  const result = await tool(probeTools, "ace_invoke_lambda").handler({ function_name: FN, payload: { x: 1 } });
+  assert.ok("status_code" in result, "missing status_code");
+  assert.ok("response_body" in result, "missing response_body");
+  assert.ok("error_type" in result, "missing error_type");
+  assert.ok("duration_ms" in result, "missing duration_ms");
+});
+
+test("ace_invoke_lambda: missing function_name returns error", async () => {
+  const result = await tool(probeTools, "ace_invoke_lambda").handler({});
+  assert.ok(result.error, "expected error field");
+});
+
+test("ace_check_queue_depth: returns depth fields", async () => {
+  const result = await tool(probeTools, "ace_check_queue_depth").handler({ queue_name: QUEUE });
+  assert.ok("messages_available" in result);
+  assert.ok("messages_in_flight" in result);
+  assert.ok("oldest_message_age_seconds" in result);
+});
+
+test("ace_check_queue_depth: missing queue_name returns error", async () => {
+  const result = await tool(probeTools, "ace_check_queue_depth").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_read_table_item: nonexistent key returns null item", async () => {
+  const result = await tool(probeTools, "ace_read_table_item").handler({
+    table_name: TABLE,
+    key: { pk: "does-not-exist" },
+  });
+  assert.ok("item" in result);
+  assert.equal(result.item, null);
+  assert.ok("consumed_read_capacity" in result);
+});
+
+test("ace_check_event_source: returns array", async () => {
+  const result = await tool(probeTools, "ace_check_event_source").handler({ function_name: FN });
+  assert.ok(Array.isArray(result));
+});
+
+test("ace_check_s3_object: nonexistent bucket returns exists:false", async () => {
+  const result = await tool(probeTools, "ace_check_s3_object").handler({
+    bucket: "no-such-bucket-xyz123",
+    key: "no-key",
+  });
+  assert.ok("exists" in result);
+  assert.equal(result.exists, false);
+});
+
+// Observe tools
+test("ace_list_resources: returns array", async () => {
+  const result = await tool(observeTools, "ace_list_resources").handler({});
+  assert.ok(Array.isArray(result));
+  if (result.length > 0) {
+    assert.ok("logical_id" in result[0]);
+    assert.ok("resource_type" in result[0]);
+    assert.ok("status" in result[0]);
+  }
+});
+
+test("ace_get_stack_outputs: returns ApiEndpoint", async () => {
+  const result = await tool(observeTools, "ace_get_stack_outputs").handler();
+  assert.ok(typeof result === "object" && !Array.isArray(result));
+  assert.ok("ApiEndpoint" in result);
+});
+
+test("ace_get_environment_variables: returns object", async () => {
+  const result = await tool(observeTools, "ace_get_environment_variables").handler({ function_name: FN });
+  assert.ok(typeof result === "object");
+});
+
+test("ace_get_log_tail: returns array or error", async () => {
+  const result = await tool(observeTools, "ace_get_log_tail").handler({ function_name: FN, line_count: 5 });
+  assert.ok(Array.isArray(result) || typeof result.error === "string");
+});
+
+test("ace_get_iam_role: nonexistent role returns error", async () => {
+  const result = await tool(observeTools, "ace_get_iam_role").handler({ role_name: "nonexistent-xyz" });
+  assert.ok(result.error);
+});
+
+// Score tools
+test("ace_verify_fix: empty key returns unauthorized", async () => {
+  const result = await tool(scoreTools, "ace_verify_fix").handler({ run_id: "r1", harness_api_key: "" });
+  assert.equal(result.error, "unauthorized");
+});
+
+test("ace_verify_fix: wrong key returns unauthorized", async () => {
+  const result = await tool(scoreTools, "ace_verify_fix").handler({ run_id: "r1", harness_api_key: "wrong" });
+  assert.equal(result.error, "unauthorized");
+});
+
+test("ace_score_run: empty key returns unauthorized", async () => {
+  const result = await tool(scoreTools, "ace_score_run").handler({ run_id: "r1", harness_api_key: "" });
+  assert.equal(result.error, "unauthorized");
+});

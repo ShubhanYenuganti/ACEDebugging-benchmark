@@ -117,11 +117,7 @@ export const probeTools = [
         const urlRes = await sqsClient.send(new GetQueueUrlCommand({ QueueName: queue_name }));
         const attrRes = await sqsClient.send(new GetQueueAttributesCommand({
           QueueUrl: urlRes.QueueUrl,
-          AttributeNames: [
-            "ApproximateNumberOfMessages",
-            "ApproximateNumberOfMessagesNotVisible",
-            "ApproximateAgeOfOldestMessage",
-          ],
+          AttributeNames: ["All"],
         }));
         const attrs = attrRes.Attributes ?? {};
         return {
