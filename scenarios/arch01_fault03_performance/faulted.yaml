@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  Environment:
+    Type: String
+    Default: local
+    AllowedValues: [local, staging, production]
+
+Resources:
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ace-bench-orders
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: order_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: order_id
+          KeyType: HASH
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: ace-bench-artifacts
+
+  OrderQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ace-bench-order-queue
+      VisibilityTimeout: 60
+      MessageRetentionPeriod: 86400
+
+  OrderDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ace-bench-order-dlq
+      MessageRetentionPeriod: 1209600
+
+  IngestionFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ace-bench-ingestion-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: IngestionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt OrderQueue.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:us-east-1:000000000000:*
+
+  ProcessorFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ace-bench-processor-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ProcessorPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt OrdersTable.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt OrderQueue.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:us-east-1:000000000000:*
+
+  IngestionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ace-bench-ingestion
+      Runtime: python3.11
+      Handler: handler.handler
+      Role: !GetAtt IngestionFunctionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          QUEUE_URL: !Ref OrderQueue
+          TABLE_NAME: ace-bench-orders
+          OUTPUT_SCHEMA: full
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: ingestion.zip
+
+  ProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ace-bench-processor
+      Runtime: python3.11
+      Handler: handler.handler
+      Role: !GetAtt ProcessorFunctionRole.Arn
+      # FAULT INJECTED: Timeout reduced from 30 to 3 seconds.
+      # Processing completes for trivial payloads but times out under
+      # any realistic load or with larger order batches.
+      Timeout: 3
+      MemorySize: 256
+      Environment:
+        Variables:
+          TABLE_NAME: ace-bench-orders
+          OUTPUT_SCHEMA: full
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: processor.zip
+
+  ProcessorEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt OrderQueue.Arn
+      FunctionName: !GetAtt ProcessorFunction.Arn
+      BatchSize: 10
+      Enabled: true
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  OrdersApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: ace-bench-orders-api
+
+  OrdersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref OrdersApi
+      ParentId: !GetAtt OrdersApi.RootResourceId
+      PathPart: orders
+
+  OrdersMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref OrdersApi
+      ResourceId: !Ref OrdersResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub >-
+          arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${IngestionFunction.Arn}/invocations
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: OrdersMethod
+    Properties:
+      RestApiId: !Ref OrdersApi
+      StageName: local
+
+  IngestionFunctionApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref IngestionFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:us-east-1:000000000000:${OrdersApi}/*/*
+
+Outputs:
+  ApiEndpoint:
+    Value: !Sub https://${OrdersApi}.execute-api.us-east-1.amazonaws.com/local/orders
+  OrderQueueUrl:
+    Value: !Ref OrderQueue
+  OrdersTableName:
+    Value: !Ref OrdersTable

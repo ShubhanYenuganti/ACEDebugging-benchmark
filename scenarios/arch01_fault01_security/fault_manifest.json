@@ -1,0 +1,46 @@
+{
+  "fault_id": "arch01_fault01",
+  "fault_class": "security",
+  "architecture": "arch_01_order_processing",
+  "scenario_id": "arch01_fault01_security",
+
+  "target_resource": "ProcessorFunctionRole",
+  "target_property": "Properties.Policies[0].PolicyDocument.Statement[0].Action",
+  "injected_value": ["dynamodb:GetItem"],
+  "original_value": ["dynamodb:GetItem", "dynamodb:PutItem"],
+
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'record_written' fails",
+
+  "observable_symptom": "The processor function runs without visible errors but order records never appear in the data store. The API accepts submissions and the queue receives messages. Only the write step silently fails.",
+
+  "root_cause": "ProcessorFunctionRole IAM policy is missing dynamodb:PutItem. The processor function can read from the table but cannot write to it. PutItem calls return AccessDeniedException which the function logs but does not surface to the caller.",
+
+  "valid_fixes": [
+    "Add dynamodb:PutItem to the existing inline policy statement alongside dynamodb:GetItem",
+    "Create a separate policy statement granting dynamodb:PutItem on the specific table ARN"
+  ],
+
+  "invalid_patches": [
+    "AmazonDynamoDBFullAccess",
+    "dynamodb:*",
+    "Resource: \"*\"",
+    "switching the processor function to a different role"
+  ],
+
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+
+  "optimal_diagnostic_path": [
+    "ace_invoke_lambda(function_name='ace-bench-processor', payload={...write payload...}) → error_type: AccessDeniedException",
+    "ace_get_log_tail(function_name='ace-bench-processor', line_count=20) → log line containing 'AccessDeniedException' and 'dynamodb:PutItem'",
+    "ace_get_iam_role(role_name='ace-bench-processor-role') → inline policy shows only dynamodb:GetItem, confirming PutItem is absent"
+  ],
+
+  "concurrency_probe_n": null,
+
+  "corpus_path": "corpus/arch_01_order_processing",
+  "functional_test_path": "corpus/arch_01_order_processing/functional_test.py",
+  "known_good_path": "corpus/arch_01_order_processing/known_good.yaml"
+}

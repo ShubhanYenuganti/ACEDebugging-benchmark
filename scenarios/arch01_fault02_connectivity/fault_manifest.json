@@ -1,0 +1,44 @@
+{
+  "fault_id": "arch01_fault02",
+  "fault_class": "connectivity",
+  "architecture": "arch_01_order_processing",
+  "scenario_id": "arch01_fault02_connectivity",
+
+  "target_resource": "ProcessorEventSourceMapping",
+  "target_property": "Properties.Enabled",
+  "injected_value": false,
+  "original_value": true,
+
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'record_written' fails; 'order_enqueued' may pass",
+
+  "observable_symptom": "Orders are accepted and acknowledged. The queue depth grows after each submission but messages are never consumed. The processor function is never invoked. No errors surface to the caller.",
+
+  "root_cause": "ProcessorEventSourceMapping has Enabled: false. The event source mapping exists and is correctly configured but is disabled, so SQS does not trigger the processor Lambda. Messages accumulate indefinitely.",
+
+  "valid_fixes": [
+    "Set Enabled: true on the ProcessorEventSourceMapping resource"
+  ],
+
+  "invalid_patches": [
+    "adding a CloudWatch Events schedule to invoke the processor",
+    "invoking the processor directly from the ingestion function",
+    "polling the queue from a separate Lambda triggered on a schedule"
+  ],
+
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+
+  "optimal_diagnostic_path": [
+    "ace_check_queue_depth(queue_name='ace-bench-order-queue') → messages_available > 0, messages_in_flight = 0 after waiting",
+    "ace_check_event_source(function_name='ace-bench-processor') → returns mapping with state='Disabled' or enabled=false",
+    "ace_describe_resource(logical_resource_id='ProcessorEventSourceMapping') → confirms Enabled: false in properties"
+  ],
+
+  "concurrency_probe_n": null,
+
+  "corpus_path": "corpus/arch_01_order_processing",
+  "functional_test_path": "corpus/arch_01_order_processing/functional_test.py",
+  "known_good_path": "corpus/arch_01_order_processing/known_good.yaml"
+}

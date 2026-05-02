@@ -1,0 +1,45 @@
+{
+  "fault_id": "arch01_fault03",
+  "fault_class": "performance",
+  "architecture": "arch_01_order_processing",
+  "scenario_id": "arch01_fault03_performance",
+
+  "target_resource": "ProcessorFunction",
+  "target_property": "Properties.Timeout",
+  "injected_value": 3,
+  "original_value": 30,
+
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'record_written' intermittently fails; pass4_concurrency fails",
+
+  "observable_symptom": "Order processing works correctly for small individual orders but fails intermittently under any load. Engineers report timeouts during peak periods and some orders never reaching the data store. The failure is non-deterministic and does not appear on simple single-order tests.",
+
+  "root_cause": "ProcessorFunction Timeout is set to 3 seconds instead of the required 30 seconds. Processing a batch of SQS messages including DynamoDB writes exceeds 3 seconds under realistic conditions, causing the function to be terminated mid-batch with a 'Task timed out' error.",
+
+  "valid_fixes": [
+    "Set Timeout: 30 on the ProcessorFunction resource",
+    "Set Timeout to any value >= 30 on the ProcessorFunction resource"
+  ],
+
+  "invalid_patches": [
+    "reducing BatchSize to 1 to avoid timeout (workaround — does not restore the correct timeout value)",
+    "adding a retry mechanism in the handler code (workaround — does not fix the root cause)",
+    "increasing MemorySize instead of Timeout"
+  ],
+
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+
+  "optimal_diagnostic_path": [
+    "ace_invoke_lambda(function_name='ace-bench-processor', payload={large batch of records}) → error_type: 'Task timed out after 3.00 seconds'",
+    "ace_get_log_tail(function_name='ace-bench-processor', line_count=20) → log line confirming timeout error",
+    "ace_describe_resource(logical_resource_id='ProcessorFunction') → properties show Timeout: 3"
+  ],
+
+  "concurrency_probe_n": 10,
+
+  "corpus_path": "corpus/arch_01_order_processing",
+  "functional_test_path": "corpus/arch_01_order_processing/functional_test.py",
+  "known_good_path": "corpus/arch_01_order_processing/known_good.yaml"
+}
