@@ -481,3 +481,101 @@ Phase A (shared utilities)
               │
          Phase E (entry point + e2e test)
 ```
+
+---
+
+## Current Implementation Status
+
+### Phase A — Complete ✅
+
+Gate: `pytest tests/test_shared.py` — **17/17 passing**
+
+#### `harness/shared/localstack_client.py`
+Module-level boto3 singletons. All clients share a single `_client(service)` factory pointing to `http://localhost:4566` with `test/test` credentials in `us-east-1`.
+
+Exports:
+- `cf_client` — CloudFormation
+- `lambda_client` — Lambda
+- `s3_client` — S3
+- `sqs_client` — SQS
+- `iam_client` — IAM
+- `logs_client` — CloudWatch Logs
+- `apigateway_client` — API Gateway
+- `health_check()` — calls `cf_client.list_stacks()`; raises `RuntimeError` if unreachable
+
+#### `harness/shared/cfn_lint_runner.py`
+Exports `run_lint(template_path: str) -> dict`.
+
+- Locates cfn-lint from venv first, falls back to PATH
+- Raises `EnvironmentError` if cfn-lint not installed
+- Parses JSON output; splits rules into E-rules (fatal) and W-rules (warnings)
+- Returns `{passed: bool, fatal_errors: [...], warnings: [...]}`
+- Only E-rules set `passed=False`
+
+#### `harness/shared/file_differ.py`
+Exports `snapshot(directory) -> dict` and `diff_snapshots(before, after, directory) -> dict`.
+
+- `snapshot`: walks directory, returns `{relative_path: file_content}` for all files
+- `diff_snapshots`: categorizes files into added/modified/removed; computes per-file line counts via `difflib.unified_diff`; returns `{files_added, files_modified, files_removed, total_files_changed, per_file_line_changes, total_lines_changed}`
+
+#### `harness/shared/result_logger.py`
+Exports `init_run`, `log_tool_call`, `log_file_change`, `log_verify_result`.
+
+- All writes go to `results/<run_id>/`
+- `log_tool_call` is thread-safe via `_trace_lock` — appends to `tool_call_trace.json` without full rewrite
+- `init_run` creates `scenario_id.txt` and initializes `tool_call_trace.json` as `[]`
+
+---
+
+### Phase B — Complete ✅
+
+Gate: `LOCALSTACK_ENDPOINT=http://localhost:4566 node --test tests/test_mcp_server.js` — **15/15 passing**
+
+MCP server registered as `ace-bench-diagnostic-mcp` in project Claude Code config. `HARNESS_API_KEY` stored in `.env` (gitignored).
+
+#### `harness/mcp_server/package.json`
+ESM package (`"type": "module"`). Dependencies: `@modelcontextprotocol/sdk ^1.0.0`, all required AWS SDK v3 clients, `jszip ^3.10.1`.
+
+#### `harness/mcp_server/tools/probe.js`
+Exports `probeTools` array — 6 tools for active probing:
+
+| Tool | What it calls | Key behavior |
+|------|--------------|-------------|
+| `ace_invoke_endpoint` | HTTP fetch to CF stack output `ApiEndpoint` | Returns `{status_code, latency_ms, body, error_type}` |
+| `ace_invoke_lambda` | `LambdaClient.InvokeCommand` (RequestResponse) | Returns `{status_code, response_body, error_type, duration_ms, billed_duration_ms}` |
+| `ace_check_queue_depth` | `SQSClient.GetQueueAttributes` with `AttributeNames: ["All"]` | Returns `{messages_available, messages_in_flight, oldest_message_age_seconds}` |
+| `ace_read_table_item` | `DynamoDBClient.GetItem`; `marshall(key)` / `unmarshall(item)` | Returns `{item\|null, consumed_read_capacity}` |
+| `ace_check_event_source` | `LambdaClient.ListEventSourceMappings` | Returns `[{source_arn, source_type, enabled, batch_size, state}]` |
+| `ace_check_s3_object` | `S3Client.HeadObject`; 404 → `{exists: false}` not error | Returns `{exists, size_bytes, last_modified}` |
+
+Shared `awsConfig` uses `process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566"`.
+
+#### `harness/mcp_server/tools/observe.js`
+Exports `observeTools` array — 6 tools for passive observation:
+
+| Tool | What it calls | Key behavior |
+|------|--------------|-------------|
+| `ace_describe_resource` | CF `DescribeStackResource` + Lambda `GetFunction` for enrichment | Returns `{resource_type, physical_id, properties, status}` |
+| `ace_list_resources` | CF `ListStackResources` | Returns `[{logical_id, physical_id, resource_type, status}]`; filterable by type |
+| `ace_get_iam_role` | `GetRole + ListRolePolicies + ListAttachedRolePolicies + GetRolePolicy` per inline | Returns `{assume_role_policy, attached_policies, inline_policies}`; decodes URL-encoded policy docs |
+| `ace_get_log_tail` | CW Logs `DescribeLogStreams` (most recent) + `GetLogEvents` | Returns `[{timestamp, request_id, level, message}]` most-recent-first |
+| `ace_get_stack_outputs` | CF `DescribeStacks` | Returns flat `{OutputKey: OutputValue}` dict |
+| `ace_get_environment_variables` | Lambda `GetFunctionConfiguration` | Returns `{key: value}` env var dict |
+
+#### `harness/mcp_server/tools/score.js`
+Exports `scoreTools` array — 2 gated stubs (active in Phase D):
+
+- `ace_verify_fix(run_id, harness_api_key)` — triggers verify loop
+- `ace_score_run(run_id, harness_api_key)` — scores a completed run
+
+Both return `{"error": "unauthorized"}` without correct `HARNESS_API_KEY`. With correct key: `{"status": "not_implemented"}` until Phase D wires the real logic.
+
+#### `harness/mcp_server/index.js`
+Imports all three tool arrays, registers 14 tools with `McpServer`, starts `StdioServerTransport`. Before each handler call, writes to stderr:
+```json
+{"tool": "<name>", "timestamp": "<ISO8601>"}
+```
+This stderr stream is tailed by the Phase C runner to build `tool_call_trace.json`.
+
+#### `tests/test_mcp_server.js`
+Node built-in test runner (`node:test`). `before()` hook creates LocalStack fixtures idempotently. 15 tests covering all 14 tools plus error/authorization paths.
