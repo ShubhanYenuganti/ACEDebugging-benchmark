@@ -31,8 +31,8 @@ The model never sees `fault_manifest.json` or `known_good.yaml`. It only sees th
 |-------|---------------|--------|
 | **A** | Shared Python utilities (LocalStack client, cfn-lint runner, file differ, result logger) | ✅ Complete — 17/17 tests passing |
 | **B** | Diagnostic MCP server with 14 tools (6 probe, 6 observe, 2 score stubs) | ✅ Complete — 15/15 tests passing, server registered |
-| **C** | Scenario runner + deployment handler (deploy faulted template, intercept fix submission) | Not started |
-| **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | Not started |
+| **C** | Scenario runner + deployment handler (deploy faulted template, intercept fix submission) | ✅ Complete — 8/8 tests passing |
+| **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | ✅ Complete — 18/18 tests passing |
 | **E** | Harness entry point `run.py` — ties all phases together end-to-end | Not started |
 
 ---
@@ -69,6 +69,15 @@ pytest tests/test_shared.py -v
 
 # Phase B — MCP server tools (requires LocalStack running)
 LOCALSTACK_ENDPOINT=http://localhost:4566 node --test tests/test_mcp_server.js
+
+# Phase C — Scenario runner & deployment handler (fully mocked)
+pytest tests/test_runner.py -v
+
+# Phase D — Verify loop (fully mocked)
+pytest tests/test_verify.py -v
+
+# All Python phases at once
+pytest tests/test_shared.py tests/test_runner.py tests/test_verify.py -v
 ```
 
 ### Register the MCP server
@@ -103,15 +112,25 @@ ace-bench/
 │   │       ├── probe.js            # 6 active-probe tools
 │   │       ├── observe.js          # 6 passive-observe tools
 │   │       └── score.js            # 2 gated score stubs (Phase D)
-│   ├── runner/               # Phase C (not yet built)
-│   ├── verify/               # Phase D (not yet built)
+│   ├── runner/               # Phase C — Scenario runner
+│   │   ├── context_builder.py      # build_context: reads scenario files, guards manifest
+│   │   ├── deployment_handler.py   # handle_submission: lint → zip → CF update
+│   │   └── scenario_runner.py      # ScenarioRunner: lifecycle, tool call interception
+│   ├── verify/               # Phase D — Verify loop
+│   │   ├── pass1_functional.py     # Run functional_test.py, parse ASSERT lines
+│   │   ├── pass2_regression.py     # Detect pass→fail regressions vs faulted baseline
+│   │   ├── pass3_classification.py # Structural diff + invalid patch detection
+│   │   ├── pass4_concurrency.py    # N concurrent requests, classify by status code
+│   │   └── verify_loop.py          # Orchestrate all 4 passes, write verify_result.json
 │   └── run.py                # Phase E (not yet built)
 ├── corpus/                   # Known-good templates + functional tests (HITL-built)
 ├── scenarios/                # Faulted deployments for evaluation runs
 ├── results/                  # Per-run output (gitignored)
 ├── tests/
-│   ├── test_shared.py        # Phase A gate (pytest)
-│   └── test_mcp_server.js    # Phase B gate (node:test)
+│   ├── test_shared.py        # Phase A gate (pytest) — 17 tests
+│   ├── test_mcp_server.js    # Phase B gate (node:test) — 15 tests
+│   ├── test_runner.py        # Phase C gate (pytest) — 8 tests
+│   └── test_verify.py        # Phase D gate (pytest) — 18 tests
 └── SPEC.md                   # Full design spec
 ```
 
