@@ -159,6 +159,7 @@ Expected: `ModuleNotFoundError: No module named 'harness.runner.context_builder'
 import os
 from botocore.exceptions import ClientError
 from harness.shared.localstack_client import cf_client
+from harness.runner.deployment_handler import _STACK_NAME
 
 _FIXED_INSTRUCTION = (
     "A deployed instance of this system is running in your local environment. "
@@ -167,9 +168,6 @@ _FIXED_INSTRUCTION = (
     "files need changing, and redeploy using localstack-deployer when ready. "
     "Your first successful redeployment is your scored submission."
 )
-
-_STACK_NAME = "ace-bench-stack"
-
 
 def _get_stack_outputs() -> dict:
     try:
@@ -353,6 +351,7 @@ from harness.shared.file_differ import snapshot, diff_snapshots
 from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import log_file_change
 
+# Single source of truth — imported by scenario_runner.py
 _STACK_NAME = "ace-bench-stack"
 _ARTIFACT_BUCKET = "ace-bench-artifacts"
 
@@ -514,9 +513,7 @@ import threading
 
 from harness.shared.file_differ import snapshot
 from harness.shared.result_logger import init_run, log_tool_call
-from harness.runner.deployment_handler import handle_submission
-
-_STACK_NAME = "ace-bench-stack"
+from harness.runner.deployment_handler import handle_submission, _STACK_NAME
 
 
 class ScenarioRunner:

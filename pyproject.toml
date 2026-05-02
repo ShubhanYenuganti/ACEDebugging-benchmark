@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ace-bench-harness"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.34.0",
+    "pytest>=8.0.0",
+    "pytest-mock>=3.12.0",
+    "cfn-lint>=0.87.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+localstack-deployer = "harness.tools.localstack_deployer:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["harness*"]
