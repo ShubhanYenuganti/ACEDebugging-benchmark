@@ -22,3 +22,11 @@ node_modules/
 
 # Editor / tool config
 .claude/
+
+# Python build artifacts
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/

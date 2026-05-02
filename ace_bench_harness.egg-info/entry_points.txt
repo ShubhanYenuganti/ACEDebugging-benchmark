@@ -1,2 +1,0 @@
-[console_scripts]
-localstack-deployer = harness.tools.localstack_deployer:main
