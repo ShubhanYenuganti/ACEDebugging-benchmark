@@ -17,5 +17,8 @@ results/
 .env
 .env.*
 
+# Node.js dependencies (harness/mcp_server/ and root symlink)
+node_modules/
+
 # Editor / tool config
 .claude/
