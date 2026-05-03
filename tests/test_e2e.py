@@ -23,6 +23,7 @@ import pytest
 
 SCENARIO_DIR = os.path.abspath("scenarios/arch01_fault01_security")
 MANIFEST_PATH = os.path.join(SCENARIO_DIR, "fault_manifest.json")
+FAULTED_YAML = os.path.join(SCENARIO_DIR, "faulted.yaml")
 RUN_ID = "e2e-test"
 RESULTS_DIR = os.path.abspath("results")
 
@@ -39,6 +40,17 @@ def check_prerequisites():
     )
     if "running" not in ls_result.stdout:
         pytest.skip("LocalStack is not running — start it with: localstack start -d")
+
+
+@pytest.fixture(autouse=True)
+def restore_faulted_yaml():
+    # The stub model mutates faulted.yaml in place; capture original contents
+    # so successive runs always start from the pristine faulted state.
+    with open(FAULTED_YAML, "rb") as f:
+        original = f.read()
+    yield
+    with open(FAULTED_YAML, "wb") as f:
+        f.write(original)
 
 
 def test_e2e_run_exits_0_with_root_cause():
