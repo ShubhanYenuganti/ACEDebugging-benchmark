@@ -15,6 +15,7 @@ from harness.shared.localstack_client import health_check
 from harness.shared.result_logger import log_verify_result
 from harness.runner.context_builder import build_context
 from harness.runner.scenario_runner import ScenarioRunner
+from harness.verify.pass1_functional import run_pass1
 from harness.verify.verify_loop import run_verify_loop
 
 _TIMEOUT_SECONDS = 30 * 60  # 30 minutes
@@ -160,6 +161,13 @@ def main() -> None:
     except RuntimeError as e:
         print(f"ERROR: Scenario deployment failed: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Write faulted_baseline.json — Pass 2 regression check uses this to find assertions
+    # that were passing on the faulted deployment but fail after the model's fix.
+    _baseline = run_pass1(corpus_dir)
+    _baseline_path = os.path.join("results", run_id, "faulted_baseline.json")
+    with open(_baseline_path, "w") as _f:
+        json.dump(_baseline, _f, indent=2)
 
     # Step 6 — build context (raises ValueError if fault_manifest.json is readable in scenario_dir)
     # Temporarily rename manifest so build_context does not raise.

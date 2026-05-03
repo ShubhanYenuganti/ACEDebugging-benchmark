@@ -61,6 +61,10 @@ def main() -> None:
         if _saw_instruction and _stripped == "=" * 60:
             break
 
+    if not _saw_instruction:
+        print("stub_model: harness exited without printing context — aborting", file=sys.stderr)
+        sys.exit(1)
+
     with open(manifest_path) as f:
         manifest = json.load(f)
 
