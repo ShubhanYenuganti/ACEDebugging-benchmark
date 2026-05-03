@@ -5,6 +5,20 @@ import yaml
 
 RESULTS_DIR = "results"
 
+# CloudFormation YAML uses !Sub, !Ref, !GetAtt etc. Register no-op constructors
+# so safe_load can parse CF templates without evaluating intrinsic functions.
+def _cf_constructor(loader, node):
+    if isinstance(node, yaml.ScalarNode):
+        return loader.construct_scalar(node)
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    return loader.construct_mapping(node)
+
+for _cf_tag in ["!Sub", "!Ref", "!GetAtt", "!Select", "!Split", "!Join", "!If",
+                "!Equals", "!Not", "!And", "!Or", "!FindInMap", "!Base64",
+                "!Condition", "!ImportValue", "!Transform", "!Cidr"]:
+    yaml.SafeLoader.add_constructor(_cf_tag, _cf_constructor)
+
 
 def _navigate(data: dict, dot_path: str):
     node = data
