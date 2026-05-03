@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -45,7 +46,6 @@ def test_e2e_run_exits_0_with_root_cause():
     harness_cmd = [sys.executable, "harness/run.py", SCENARIO_DIR, "--run-id", RUN_ID]
     stub_cmd = [sys.executable, "tests/stubs/stub_model.py", SCENARIO_DIR, MANIFEST_PATH]
 
-    # Pipe harness stdout into stub model stdin
     harness_proc = subprocess.Popen(
         harness_cmd,
         stdout=subprocess.PIPE,
@@ -59,13 +59,33 @@ def test_e2e_run_exits_0_with_root_cause():
         stderr=subprocess.PIPE,
         text=True,
     )
+    # Release parent's copy of the write-end so stub sees EOF when harness exits.
+    harness_proc.stdout.close()
 
-    harness_stdout, harness_stderr = harness_proc.communicate(timeout=600)
-    stub_stdout, stub_stderr = stub_proc.communicate(timeout=60)
+    # Drain harness stderr in background to prevent OS pipe buffer deadlock.
+    _harness_stderr: list[str] = []
 
-    print("\n--- harness stdout ---")
-    print(harness_stdout)
-    print("--- harness stderr ---")
+    def _read_harness_stderr() -> None:
+        _harness_stderr.append(harness_proc.stderr.read())
+
+    stderr_thread = threading.Thread(target=_read_harness_stderr, daemon=True)
+    stderr_thread.start()
+
+    try:
+        stub_stdout, stub_stderr = stub_proc.communicate(timeout=600)
+    except subprocess.TimeoutExpired:
+        stub_proc.kill()
+        harness_proc.kill()
+        harness_proc.wait()
+        stub_proc.wait()
+        stderr_thread.join(timeout=5)
+        pytest.fail("E2E test timed out after 600 seconds")
+
+    harness_proc.wait(timeout=30)
+    stderr_thread.join(timeout=10)
+    harness_stderr = _harness_stderr[0] if _harness_stderr else ""
+
+    print("\n--- harness stderr ---")
     print(harness_stderr)
     print("--- stub stdout ---")
     print(stub_stdout)
