@@ -132,13 +132,13 @@ def main() -> None:
 
     manifest_path = os.path.join(scenario_dir, "fault_manifest.json")
 
-    # Derive corpus_dir from scenario_id (e.g. arch01_fault01_security -> corpus/arch_01_fault01_default)
-    parts = scenario_id.split("_")
-    arch_prefix = "_".join(parts[:2]) if len(parts) >= 2 else parts[0]
-    corpus_dir = os.path.join(os.path.dirname(scenario_dir), "..", "corpus",
-                              f"arch_{arch_prefix[len('arch'):]}_default")
+    # Derive corpus_dir from manifest architecture field
+    with open(manifest_path) as f:
+        _manifest_data = json.load(f)
+    _arch_name = _manifest_data.get("architecture", "")
+    corpus_dir = os.path.join(os.path.dirname(scenario_dir), "..", "corpus", _arch_name)
     corpus_dir = os.path.abspath(corpus_dir)
-    if not os.path.isdir(corpus_dir):
+    if not _arch_name or not os.path.isdir(corpus_dir):
         # Fallback: functional_test.py may be co-located in scenario_dir
         corpus_dir = scenario_dir
 
