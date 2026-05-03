@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 import yaml
 
@@ -20,13 +21,31 @@ for _cf_tag in ["!Sub", "!Ref", "!GetAtt", "!Select", "!Split", "!Join", "!If",
     yaml.SafeLoader.add_constructor(_cf_tag, _cf_constructor)
 
 
-def _navigate(data: dict, dot_path: str):
+# Splits a dotted segment like "Statement[0]" into ("Statement", [0]).
+# Supports any number of trailing indices, e.g. "Foo[0][1]".
+_SEGMENT_RE = re.compile(r"^([^\[]+)((?:\[\d+\])*)$")
+_INDEX_RE = re.compile(r"\[(\d+)\]")
+
+
+def _navigate(data, dot_path: str):
+    """Navigate a nested dict/list structure using a dotted path with optional
+    bracket indices, e.g. "Properties.Policies[0].Statement[0].Action".
+    Returns None if any segment cannot be resolved.
+    """
     node = data
     for part in dot_path.split("."):
-        if isinstance(node, dict):
-            node = node.get(part)
-        else:
+        m = _SEGMENT_RE.match(part)
+        if not m:
             return None
+        key, indices = m.group(1), m.group(2)
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+        for idx_str in _INDEX_RE.findall(indices):
+            idx = int(idx_str)
+            if not isinstance(node, list) or idx >= len(node) or idx < -len(node):
+                return None
+            node = node[idx]
     return node
 
 

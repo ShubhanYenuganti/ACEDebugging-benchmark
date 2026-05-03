@@ -249,6 +249,96 @@ class TestPass3Classification:
         result = run_pass3(scenario_dir, "run-p3-4", pass1_result, manifest_path)
         assert result["classification"] in ("partial", "none")
 
+    def test_structural_match_with_list_indexed_path(self, tmp_path, monkeypatch):
+        # target_property uses list-index syntax like "Foo[0].Bar[1].Baz" — the
+        # navigator must descend into list elements, not just dict keys.
+        faulted_yaml = (
+            "Resources:\n"
+            "  Role:\n"
+            "    Properties:\n"
+            "      Policies:\n"
+            "        - PolicyName: P\n"
+            "          PolicyDocument:\n"
+            "            Statement:\n"
+            "              - Effect: Allow\n"
+            "                Action:\n"
+            "                  - dynamodb:GetItem\n"
+        )
+        submitted_yaml = (
+            "Resources:\n"
+            "  Role:\n"
+            "    Properties:\n"
+            "      Policies:\n"
+            "        - PolicyName: P\n"
+            "          PolicyDocument:\n"
+            "            Statement:\n"
+            "              - Effect: Allow\n"
+            "                Action:\n"
+            "                  - dynamodb:GetItem\n"
+            "                  - dynamodb:PutItem\n"
+        )
+        manifest = {
+            "target_resource": "Role",
+            "target_property": (
+                "Properties.Policies[0].PolicyDocument.Statement[0].Action"
+            ),
+            "original_value": ["dynamodb:GetItem", "dynamodb:PutItem"],
+            "invalid_patches": [],
+            "valid_fixes": [],
+        }
+        scenario_dir, manifest_path, results_dir = self._setup(
+            tmp_path,
+            "run-p3-5",
+            manifest,
+            faulted_yaml,
+            submitted_yaml,
+            "+                  - dynamodb:PutItem\n",
+        )
+        monkeypatch.setattr(p3mod, "RESULTS_DIR", results_dir)
+        pass1_result = {
+            "primary_assertions_passed": True,
+            "assertions": {"check_a": {"result": "pass", "message": "ok"}},
+        }
+        result = run_pass3(scenario_dir, "run-p3-5", pass1_result, manifest_path)
+        assert result["structural_match"] is True
+        assert result["classification"] == "root_cause"
+
+    def test_structural_match_false_when_list_index_value_differs(
+        self, tmp_path, monkeypatch
+    ):
+        faulted_yaml = (
+            "Resources:\n"
+            "  Role:\n"
+            "    Properties:\n"
+            "      Policies:\n"
+            "        - PolicyName: P\n"
+            "          PolicyDocument:\n"
+            "            Statement:\n"
+            "              - Effect: Allow\n"
+            "                Action:\n"
+            "                  - dynamodb:GetItem\n"
+        )
+        submitted_yaml = faulted_yaml  # no fix applied
+        manifest = {
+            "target_resource": "Role",
+            "target_property": (
+                "Properties.Policies[0].PolicyDocument.Statement[0].Action"
+            ),
+            "original_value": ["dynamodb:GetItem", "dynamodb:PutItem"],
+            "invalid_patches": [],
+            "valid_fixes": [],
+        }
+        scenario_dir, manifest_path, results_dir = self._setup(
+            tmp_path, "run-p3-6", manifest, faulted_yaml, submitted_yaml, ""
+        )
+        monkeypatch.setattr(p3mod, "RESULTS_DIR", results_dir)
+        pass1_result = {
+            "primary_assertions_passed": False,
+            "assertions": {"check_a": {"result": "fail", "message": ""}},
+        }
+        result = run_pass3(scenario_dir, "run-p3-6", pass1_result, manifest_path)
+        assert result["structural_match"] is False
+
 
 from unittest.mock import MagicMock, patch
 
