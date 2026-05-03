@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 import uuid
 
@@ -17,6 +18,7 @@ from harness.runner.scenario_runner import ScenarioRunner
 from harness.verify.verify_loop import run_verify_loop
 
 _TIMEOUT_SECONDS = 30 * 60  # 30 minutes
+_SIGNAL_FILE = os.environ.get("ACE_BENCH_SIGNAL_FILE", "/tmp/ace-bench-update.json")
 
 
 def _validate_scenario(scenario_dir: str) -> None:
@@ -116,6 +118,12 @@ def main() -> None:
 
     load_dotenv()
 
+    # Remove stale redeployment signal from a previous run
+    try:
+        os.remove(_SIGNAL_FILE)
+    except OSError:
+        pass
+
     scenario_dir = os.path.abspath(args.scenario_dir)
     run_id = args.run_id or uuid.uuid4().hex[:8]
     scenario_id = os.path.basename(scenario_dir)
@@ -172,12 +180,26 @@ def main() -> None:
     # THREADING NOTE: runner.submitted is set True BEFORE handle_submission() completes
     # (double-submission guard). We must also wait for _last_deployment_outcome != "unknown"
     # as the real completion signal.
+    _redeploy_thread: threading.Thread | None = None
+
     deadline = time.monotonic() + _TIMEOUT_SECONDS
     while not runner.submitted or runner._last_deployment_outcome == "unknown":
         if time.monotonic() > deadline:
             log_verify_result(run_id, {"outcome": "timed_out"})
             print("ERROR: Timed out waiting for model redeployment.", file=sys.stderr)
             sys.exit(1)
+
+        # Detect update-stack signal from localstack-deployer
+        if _redeploy_thread is None and os.path.isfile(_SIGNAL_FILE):
+            try:
+                os.remove(_SIGNAL_FILE)
+            except OSError:
+                pass
+            _redeploy_thread = threading.Thread(
+                target=runner.on_model_redeploy, daemon=True
+            )
+            _redeploy_thread.start()
+
         time.sleep(1)
 
     # Step 9 — verify loop
