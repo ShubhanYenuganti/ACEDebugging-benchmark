@@ -51,8 +51,15 @@ def main() -> None:
     scenario_dir = os.path.abspath(sys.argv[1])
     manifest_path = os.path.abspath(sys.argv[2])
 
-    # Consume all stdin (unblocks harness stdout pipe)
-    _ = sys.stdin.read()
+    # Read context lines until the closing separator after INSTRUCTION.
+    # We cannot wait for EOF — the harness keeps stdout open during the poll loop.
+    _saw_instruction = False
+    for _line in sys.stdin:
+        _stripped = _line.rstrip("\n")
+        if _stripped == "INSTRUCTION:":
+            _saw_instruction = True
+        if _saw_instruction and _stripped == "=" * 60:
+            break
 
     with open(manifest_path) as f:
         manifest = json.load(f)
