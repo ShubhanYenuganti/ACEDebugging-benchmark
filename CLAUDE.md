@@ -692,4 +692,64 @@ Exports `run_verify_loop(scenario_dir, run_id, deployment_outcome, manifest_path
 - Return shape: `{outcome, pass1_functional, pass2_regression, pass3_classification, pass4_concurrency}`
 
 #### `tests/test_verify.py`
-pytest with pytest-mock. 5 test classes, 18 tests total. All subprocess outputs and file fixtures are hand-crafted; no live LocalStack required.
+pytest with pytest-mock. 5 test classes, 20 tests total. All subprocess outputs and file fixtures are hand-crafted; no live LocalStack required.
+
+(Phase E added two regression tests under `TestPass3Classification` to cover bracket-indexed `target_property` paths — see Phase E notes below.)
+
+---
+
+### Phase E — Complete ✅
+
+Gate: `pytest tests/test_e2e.py -v -s` (with live LocalStack) — **1/1 passing**, exits 0, `classification: root_cause`, `regression_count: 0`. Full prior-phase Python suite: `pytest tests/test_shared.py tests/test_runner.py tests/test_verify.py` — **45/45 passing** (17 + 8 + 20).
+
+#### `harness/run.py`
+CLI entry point. Invocation: `python harness/run.py <scenario_dir> [--run-id <id>]`.
+
+Startup pipeline:
+1. `argparse` (`scenario_dir` positional, `--run-id` optional auto-generated `uuid.uuid4().hex[:8]`)
+2. `dotenv.load_dotenv()` — reads `HARNESS_API_KEY` and any other env from `.env`
+3. Removes stale `ACE_BENCH_SIGNAL_FILE` (default `/tmp/ace-bench-update.json`) from prior runs
+4. `localstack_client.health_check()` — exit 1 with stderr message if unreachable
+5. `_validate_scenario` — confirms `scenario.md`, `faulted.yaml`, `fault_manifest.json`, `deployment/` are all present
+6. Reads `fault_manifest.json` to derive `corpus_dir = corpus/<manifest["architecture"]>` (falls back to `scenario_dir` if not found)
+7. `ScenarioRunner(scenario_dir, run_id)` — `__init__` calls `init_run`, takes `start_snapshot`
+8. `runner.start()` — deploys faulted template, exits 1 on `RuntimeError`
+9. Runs Pass 1 against the faulted deployment and writes `results/<run_id>/faulted_baseline.json` (Pass 2 of verify reads this)
+10. Temporarily renames `fault_manifest.json` → `fault_manifest.json.hidden` so `build_context` does not raise its leak guard; restores in `finally`
+11. `_print_context(ctx)` — prints scenario brief, template path, deployment dir, stack outputs, and the fixed instruction to stdout
+12. Polls every 1s for `runner.submitted` AND `runner._last_deployment_outcome != "unknown"`. If `ACE_BENCH_SIGNAL_FILE` appears (written by a `localstack-deployer update-stack` shim), spawns a daemon thread that calls `runner.on_model_redeploy()`. Timeout: 30 minutes — writes `{"outcome": "timed_out"}` and exits 1
+13. `run_verify_loop(scenario_dir, run_id, deployment_outcome=runner._last_deployment_outcome, manifest_path, corpus_dir, api_endpoint=ctx["stack_outputs"].get("ApiEndpoint", ""))`
+14. `_print_summary` — `═` border block with run_id, scenario_id, deployment status, functional/regressions/classification/concurrency labels, tool calls, files changed, lines changed, results path
+15. Exit 0 if `verify_result["outcome"] == "completed"`, else exit 1
+
+`_print_summary` is wrapped in a `BrokenPipeError` guard — if a downstream pipe consumer closed early (E2E setup pipes harness stdout into the stub model), the handler `os.dup2`s `/dev/null` onto fd 1 so subsequent shutdown flushes don't raise and force exit code 120. The summary is cosmetic; `verify_result.json` is the authoritative record.
+
+#### `harness/runner/scenario_runner.py` (Phase E delta)
+Added `self._last_deployment_outcome: str = "unknown"` in `__init__`, set inside `on_model_redeploy` from `handle_submission`'s returned outcome (or `"error"` on exception). `harness/run.py` reads this field after the poll loop unblocks to pass `deployment_outcome` into `run_verify_loop`. Existing `submitted` flag still gates double-submission.
+
+#### `harness/verify/pass3_classification.py` (Phase E delta)
+`_navigate` now handles bracket-indexed dot-path segments such as `Properties.Policies[0].PolicyDocument.Statement[0].Action`. Previously it only did `dict.get()` per segment, causing `submitted_value` to be `None` for any list-indexed `target_property` and misreporting `root_cause` as `partial`. New implementation uses regex `^([^\[]+)((?:\[\d+\])*)$` per segment plus list-bounds checking for each `[N]`. Two TDD tests added in `TestPass3Classification`:
+- `test_structural_match_with_list_indexed_path` — fix applied → `classification: root_cause`
+- `test_structural_match_false_when_list_index_value_differs` — no fix → `structural_match: false`
+
+#### `tests/stubs/stub_model.py`
+E2E stub used in place of a real LLM. Reads context lines from stdin until the closing `=` separator after `INSTRUCTION:` (does not wait for EOF — harness keeps stdout open during its poll loop). Loads `fault_manifest.json`, applies the known-correct fix to `faulted.yaml`, then runs `localstack-deployer update-stack --stack-name ace-bench-stack` to trigger redeployment.
+
+For `injected_value`/`original_value` lists (e.g. IAM Action arrays), `_apply_sequence_fix` matches the YAML block-sequence representation along with any preceding `# FAULT INJECTED` comment lines at the same indent and replaces with the original sequence. For scalar values, falls back to a single `str.replace`.
+
+#### `tests/test_e2e.py`
+Single end-to-end test, requires live LocalStack and `scenarios/arch01_fault01_security/`.
+
+`check_prerequisites` (module autouse fixture): skips if scenario dir, manifest, or LocalStack is missing.
+
+`restore_faulted_yaml` (function autouse fixture): snapshots `faulted.yaml` byte-for-byte at setup, restores at teardown so successive runs always start from the pristine faulted state (the stub mutates the file in place).
+
+`test_e2e_run_exits_0_with_root_cause`:
+- Spawns `python harness/run.py SCENARIO_DIR --run-id e2e-test`
+- Pipes harness stdout → `python tests/stubs/stub_model.py SCENARIO_DIR MANIFEST_PATH` stdin
+- Closes parent's copy of harness stdout so stub sees EOF when harness exits
+- Drains harness stderr in a background thread to prevent OS pipe buffer deadlock
+- Asserts `harness_proc.returncode == 0`, `verify_result.json` exists with `outcome: "completed"`, `classification: "root_cause"`, `regression_count: 0`
+
+#### Known follow-up (not blocking Phase E gate)
+`scenarios/arch01_fault01_security/deployment/lambda/handler.py` only handles SQS `Records` events, but the CFN template uses the same `Handler: handler.handler` for both the ingestion (HTTP API Gateway target) and processor lambdas. The corpus `functional_test.py` invokes the ingestion lambda with an HTTP-shaped event and gets the processor's `{"processed": 0, "failed": 0}` response — so the primary `ingestion_accepts_post` assertion fails regardless of the IAM fix. The E2E test still passes because it asserts only on `pass3_classification` and `pass2_regression`. To make the scenario's functional assertions exercise an end-to-end happy path, add HTTP-event branching to `handler.py` (or supply a separate `ingestion.py`).

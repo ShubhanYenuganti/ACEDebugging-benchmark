@@ -32,8 +32,8 @@ The model never sees `fault_manifest.json` or `known_good.yaml`. It only sees th
 | **A** | Shared Python utilities (LocalStack client, cfn-lint runner, file differ, result logger) | ✅ Complete — 17/17 tests passing |
 | **B** | Diagnostic MCP server with 14 tools (6 probe, 6 observe, 2 score stubs) | ✅ Complete — 15/15 tests passing, server registered |
 | **C** | Scenario runner + deployment handler (deploy faulted template, intercept fix submission) | ✅ Complete — 8/8 tests passing |
-| **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | ✅ Complete — 18/18 tests passing |
-| **E** | Harness entry point `run.py` — ties all phases together end-to-end | Not started |
+| **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | ✅ Complete — 20/20 tests passing |
+| **E** | Harness entry point `run.py` — ties all phases together end-to-end | ✅ Complete — E2E test passing (45/45 Python tests, exit 0, classification `root_cause`) |
 
 ---
 
@@ -75,6 +75,9 @@ pytest tests/test_runner.py -v
 
 # Phase D — Verify loop (fully mocked)
 pytest tests/test_verify.py -v
+
+# Phase E — End-to-end harness (requires LocalStack + .env with HARNESS_API_KEY)
+pytest tests/test_e2e.py -v -s
 
 # All Python phases at once
 pytest tests/test_shared.py tests/test_runner.py tests/test_verify.py -v
@@ -122,15 +125,18 @@ ace-bench/
 │   │   ├── pass3_classification.py # Structural diff + invalid patch detection
 │   │   ├── pass4_concurrency.py    # N concurrent requests, classify by status code
 │   │   └── verify_loop.py          # Orchestrate all 4 passes, write verify_result.json
-│   └── run.py                # Phase E (not yet built)
+│   └── run.py                # Phase E — CLI entry point (argparse + dotenv + verify orchestration)
 ├── corpus/                   # Known-good templates + functional tests (HITL-built)
 ├── scenarios/                # Faulted deployments for evaluation runs
 ├── results/                  # Per-run output (gitignored)
 ├── tests/
+│   ├── stubs/
+│   │   └── stub_model.py     # E2E: applies known fix, triggers redeployment
 │   ├── test_shared.py        # Phase A gate (pytest) — 17 tests
 │   ├── test_mcp_server.js    # Phase B gate (node:test) — 15 tests
 │   ├── test_runner.py        # Phase C gate (pytest) — 8 tests
-│   └── test_verify.py        # Phase D gate (pytest) — 18 tests
+│   ├── test_verify.py        # Phase D gate (pytest) — 20 tests
+│   └── test_e2e.py           # Phase E gate (pytest, requires live LocalStack) — 1 test
 └── SPEC.md                   # Full design spec
 ```
 
