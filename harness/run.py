@@ -220,8 +220,21 @@ def main() -> None:
         api_endpoint=ctx["stack_outputs"].get("ApiEndpoint", ""),
     )
 
-    # Step 10 — print human-readable summary
-    _print_summary(run_id, scenario_id, verify_result, runner)
+    # Step 10 — print human-readable summary (stdout may be closed if piped to stub)
+    try:
+        _print_summary(run_id, scenario_id, verify_result, runner)
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # Pipe consumer closed early (e.g. stub_model finished reading); summary is
+        # cosmetic — verify_result.json is the authoritative record. Redirect
+        # stdout to /dev/null so the interpreter shutdown's flush does not raise
+        # again (which would force exit code 120).
+        try:
+            devnull_fd = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull_fd, sys.stdout.fileno())
+            os.close(devnull_fd)
+        except OSError:
+            pass
 
     # Step 11 — exit code
     sys.exit(0 if verify_result.get("outcome") == "completed" else 1)
