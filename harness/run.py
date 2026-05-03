@@ -132,7 +132,7 @@ def main() -> None:
 
     manifest_path = os.path.join(scenario_dir, "fault_manifest.json")
 
-    # Derive corpus_dir from scenario_id (e.g. arch01_fault01_security -> corpus/arch_01_default)
+    # Derive corpus_dir from scenario_id (e.g. arch01_fault01_security -> corpus/arch_01_fault01_default)
     parts = scenario_id.split("_")
     arch_prefix = "_".join(parts[:2]) if len(parts) >= 2 else parts[0]
     corpus_dir = os.path.join(os.path.dirname(scenario_dir), "..", "corpus",

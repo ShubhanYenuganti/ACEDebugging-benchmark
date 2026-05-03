@@ -53,6 +53,10 @@ class ScenarioRunner:
             if self.submitted:
                 return {"outcome": "already_submitted"}
             self.submitted = True
-        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot)
+        try:
+            result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot)
+        except Exception:
+            self._last_deployment_outcome = "error"
+            raise
         self._last_deployment_outcome = result.get("outcome", "unknown")
         return result
