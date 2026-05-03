@@ -64,7 +64,7 @@ def main() -> None:
     injected_value = manifest.get("injected_value")
     original_value = manifest.get("original_value")
 
-    if not injected_value or not original_value:
+    if injected_value is None or original_value is None:
         print("stub_model: manifest missing injected_value or original_value", file=sys.stderr)
         sys.exit(1)
 
