@@ -15,6 +15,7 @@ class ScenarioRunner:
         self.deployment_dir = os.path.join(self.scenario_dir, "deployment")
         self.tool_call_count = 0
         self.submitted = False
+        self._last_deployment_outcome: str = "unknown"
         self._lock = threading.Lock()
 
         scenario_id = os.path.basename(self.scenario_dir)
@@ -52,4 +53,6 @@ class ScenarioRunner:
             if self.submitted:
                 return {"outcome": "already_submitted"}
             self.submitted = True
-        return handle_submission(self.scenario_dir, self.run_id, self.start_snapshot)
+        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot)
+        self._last_deployment_outcome = result.get("outcome", "unknown")
+        return result
