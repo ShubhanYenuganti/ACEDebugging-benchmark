@@ -1,10 +1,19 @@
 import datetime
+import io
 import os
+import re
 import subprocess
 import threading
+import zipfile
 
-from harness.runner.deployment_handler import _STACK_NAME, handle_submission
+from harness.runner.deployment_handler import (
+    _ARTIFACT_BUCKET,
+    _STACK_NAME,
+    _ensure_artifact_bucket,
+    handle_submission,
+)
 from harness.shared.file_differ import snapshot
+from harness.shared.localstack_client import s3_client
 from harness.shared.result_logger import init_run, log_tool_call
 
 
@@ -22,7 +31,38 @@ class ScenarioRunner:
         init_run(run_id, scenario_id)
         self.start_snapshot = snapshot(self.deployment_dir)
 
+    def _upload_initial_lambda_zips(self) -> None:
+        template_path = os.path.join(self.scenario_dir, "faulted.yaml")
+        lambda_dir = os.path.join(self.deployment_dir, "lambda")
+
+        with open(template_path, "r", encoding="utf-8") as f:
+            template_body = f.read()
+
+        s3_keys = re.findall(r"S3Key:\s*(\S+)", template_body)
+
+        py_files = []
+        if os.path.isdir(lambda_dir):
+            py_files = sorted(
+                os.path.join(lambda_dir, fn)
+                for fn in os.listdir(lambda_dir)
+                if fn.endswith(".py")
+            )
+
+        if not py_files or not s3_keys:
+            return
+
+        _ensure_artifact_bucket()
+        for s3_key in s3_keys:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for py_path in py_files:
+                    zf.write(py_path, arcname=os.path.basename(py_path))
+            s3_client.put_object(
+                Bucket=_ARTIFACT_BUCKET, Key=s3_key, Body=buf.getvalue()
+            )
+
     def start(self) -> None:
+        self._upload_initial_lambda_zips()
         result = subprocess.run(
             [
                 "localstack-deployer",
