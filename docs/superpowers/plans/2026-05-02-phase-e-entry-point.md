@@ -38,7 +38,7 @@ test -f .env && grep -q HARNESS_API_KEY .env && echo "OK" || echo "MISSING"
 
 **5. python-dotenv is installed**
 ```bash
-python -c "import dotenv; print(dotenv.__version__)"
+python -c "from importlib.metadata import version; printdotenv; print(dotenv.__version__)"
 # If missing: pip install python-dotenv && echo "python-dotenv>=1.0.0" >> requirements.txt
 ```
 
@@ -62,7 +62,6 @@ echo "The Lambda function returns 500 on all requests." > scenarios/arch01_fault
 | `tests/stubs/__init__.py` | Package marker for stubs |
 | `tests/stubs/stub_model.py` | E2E stub: reads context from stdin, applies known fix, triggers redeployment |
 | `tests/test_e2e.py` | E2E integration test (requires live LocalStack + real scenario) |
-
 ---
 
 ## Task 1: Extend ScenarioRunner with `_last_deployment_outcome`
@@ -375,8 +374,35 @@ Usage (run after harness/run.py starts):
 
 import json
 import os
+import re
 import subprocess
 import sys
+
+
+def _apply_sequence_fix(
+    template_text: str,
+    injected: list,
+    original: list,
+) -> tuple:
+    """
+    Replace the YAML block-sequence representation of `injected` with
+    `original`, also stripping any preceding # FAULT INJECTED comment
+    lines at the same indentation level.
+
+    Returns (changed: bool, new_text: str).
+    """
+    first = re.escape(injected[0])
+    m = re.search(r"^(\s*)- " + first + r"\s*$", template_text, re.MULTILINE)
+    if not m:
+        return False, template_text
+
+    pad = m.group(1)
+    comment_block = r"(?:" + re.escape(pad) + r"#[^\n]*\n)*"
+    injected_block = re.escape("\n".join(f"{pad}- {v}" for v in injected))
+    original_block = "\n".join(f"{pad}- {v}" for v in original)
+
+    new_text = re.sub(comment_block + injected_block, original_block, template_text, count=1)
+    return new_text != template_text, new_text
 
 
 def main() -> None:
@@ -397,21 +423,29 @@ def main() -> None:
     with open(template_path) as f:
         template = f.read()
 
-    faulted_value = str(manifest.get("faulted_value", ""))
-    original_value = str(manifest.get("original_value", ""))
+    injected_value = manifest.get("injected_value")  # list e.g. ["dynamodb:GetItem"]
+    original_value = manifest.get("original_value")  # list e.g. ["dynamodb:GetItem", "dynamodb:PutItem"]
 
-    if faulted_value and faulted_value in template:
-        fixed = template.replace(faulted_value, original_value, 1)
-        with open(template_path, "w") as f:
-            f.write(fixed)
-        print(f"stub_model: applied fix {faulted_value!r} -> {original_value!r}")
+    if not injected_value or not original_value:
+        print("stub_model: manifest missing injected_value or original_value", file=sys.stderr)
+        sys.exit(1)
+
+    if isinstance(injected_value, list):
+        changed, fixed = _apply_sequence_fix(template, injected_value, original_value)
     else:
-        print("stub_model: faulted_value not found in template, no patch applied", file=sys.stderr)
+        changed = str(injected_value) in template
+        fixed = template.replace(str(injected_value), str(original_value), 1)
+
+    if not changed:
+        print("stub_model: injected_value not found in template — no patch applied", file=sys.stderr)
+        sys.exit(1)
+
+    with open(template_path, "w") as f:
+        f.write(fixed)
+    print(f"stub_model: applied fix — injected={injected_value!r} -> original={original_value!r}")
 
     result = subprocess.run(
-        ["localstack-deployer", "update-stack",
-         "--stack-name", "ace-bench-stack",
-         "--template", template_path],
+        ["localstack-deployer", "update-stack", "--stack-name", "ace-bench-stack"],
         capture_output=True,
         text=True,
     )
