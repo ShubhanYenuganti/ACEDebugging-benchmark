@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 import zipfile
 
 from harness.runner.deployment_handler import (
@@ -13,7 +14,7 @@ from harness.runner.deployment_handler import (
     handle_submission,
 )
 from harness.shared.file_differ import snapshot
-from harness.shared.localstack_client import s3_client
+from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import init_run, log_tool_call
 
 
@@ -61,8 +62,37 @@ class ScenarioRunner:
                 Bucket=_ARTIFACT_BUCKET, Key=s3_key, Body=buf.getvalue()
             )
 
+    def _delete_existing_stack(self) -> None:
+        # Delete any existing stack so the bucket is removed before we re-upload.
+        # The ArtifactBucket is a CF resource — deleting the stack deletes the bucket.
+        # We must upload zips AFTER deletion so the new create-stack finds them.
+        try:
+            status = cf_client.describe_stacks(StackName=_STACK_NAME)["Stacks"][0]["StackStatus"]
+        except Exception as e:
+            if "does not exist" in str(e):
+                return  # nothing to delete
+            raise
+        if status == "DELETE_COMPLETE":
+            return
+        cf_client.delete_stack(StackName=_STACK_NAME)
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            time.sleep(3)
+            try:
+                s = cf_client.describe_stacks(StackName=_STACK_NAME)["Stacks"][0]["StackStatus"]
+                if s == "DELETE_COMPLETE":
+                    break
+            except Exception as e:
+                if "does not exist" in str(e):
+                    break
+                raise
+
     def start(self) -> None:
+        # 1. Delete any existing stack (removes the CF-managed ArtifactBucket)
+        self._delete_existing_stack()
+        # 2. Upload Lambda zips now that the bucket has been deleted by stack deletion
         self._upload_initial_lambda_zips()
+        # 3. Create the stack — localstack-deployer will skip deletion (stack is gone)
         result = subprocess.run(
             [
                 "localstack-deployer",
