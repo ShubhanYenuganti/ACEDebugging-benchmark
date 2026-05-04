@@ -363,3 +363,97 @@ def test_quality_prompt_includes_context():
     assert "known_good.yaml" in prompt.lower() or "ProcessorLambdaESM" in prompt
     assert "traffic_flow" in prompt.lower() or "Hop 4" in prompt
     assert "valid_fixes" in prompt or str(SAMPLE_MANIFEST["valid_fixes"]) in prompt
+
+
+import os, pathlib, importlib
+
+
+def _write_file(path: pathlib.Path, content: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+def _make_run_dir(base: pathlib.Path, run_id: str, scenario_id: str, verify: dict, trace: list, file_log: dict) -> pathlib.Path:
+    run_dir = base / "results" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "scenario_id.txt").write_text(scenario_id)
+    (run_dir / "verify_result.json").write_text(json.dumps(verify))
+    (run_dir / "tool_call_trace.json").write_text(json.dumps(trace))
+    (run_dir / "file_change_log.json").write_text(json.dumps(file_log))
+    return run_dir
+
+
+def _make_scenario_dir(base: pathlib.Path, scenario_id: str, manifest: dict, faulted_yaml: str) -> pathlib.Path:
+    s_dir = base / "scenarios" / scenario_id
+    s_dir.mkdir(parents=True)
+    (s_dir / "fault_manifest.json").write_text(json.dumps(manifest))
+    (s_dir / "faulted.yaml").write_text(faulted_yaml)
+    return s_dir
+
+
+def _make_corpus_dir(base: pathlib.Path, arch_id: str, known_good: str, traffic_flow: str) -> pathlib.Path:
+    c_dir = base / "corpus" / arch_id
+    c_dir.mkdir(parents=True)
+    (c_dir / "known_good.yaml").write_text(known_good)
+    (c_dir / "traffic_flow.md").write_text(traffic_flow)
+    return c_dir
+
+
+@patch("harness.scoring.dimensions.identification.call_scoring_agent")
+@patch("harness.scoring.dimensions.fix_correctness.call_scoring_agent")
+@patch("harness.scoring.dimensions.regression.call_scoring_agent")
+@patch("harness.scoring.dimensions.efficiency.call_scoring_agent")
+@patch("harness.scoring.dimensions.quality.call_scoring_agent")
+def test_scorer_writes_score_json(mock_q, mock_e, mock_r, mock_fc, mock_id, tmp_path):
+    mock_id.return_value = '{"score": 1.0, "rationale": "identified"}'
+    mock_fc.return_value = '{"rationale": "all passed"}'
+    mock_r.return_value = '{"rationale": "no regressions"}'
+    mock_e.return_value = '{"rationale": "efficient"}'
+    mock_q.return_value = '{"score": 1.0, "classification": "root_cause", "rationale": "clean"}'
+
+    scenario_id = "arch_01_order_processing_fault_01"
+    arch_id = "arch_01_order_processing"
+    run_id = "test-run-001"
+
+    _make_run_dir(tmp_path, run_id, scenario_id, SAMPLE_VERIFY, SAMPLE_TRACE, SAMPLE_FILE_LOG)
+    _make_scenario_dir(tmp_path, scenario_id, SAMPLE_MANIFEST, "faulted: yaml")
+    _make_corpus_dir(tmp_path, arch_id, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+
+    from harness.scoring.scorer import score_run
+    result = score_run(run_id, str(tmp_path))
+
+    score_path = tmp_path / "results" / run_id / "score.json"
+    assert score_path.exists(), "score.json was not written"
+
+    written = json.loads(score_path.read_text())
+    assert written["run_id"] == run_id
+    assert written["final_score"] >= 0.0
+    assert "dimensions" in written
+    assert "identification" in written["dimensions"]
+    assert "fix_correctness" in written["dimensions"]
+    assert "regression_penalty" in written["dimensions"]
+    assert "efficiency" in written["dimensions"]
+    assert "quality" in written["dimensions"]
+
+
+@patch("harness.scoring.dimensions.identification.call_scoring_agent")
+@patch("harness.scoring.dimensions.fix_correctness.call_scoring_agent")
+@patch("harness.scoring.dimensions.regression.call_scoring_agent")
+@patch("harness.scoring.dimensions.efficiency.call_scoring_agent")
+@patch("harness.scoring.dimensions.quality.call_scoring_agent")
+def test_scorer_zero_on_did_not_deploy(mock_q, mock_e, mock_r, mock_fc, mock_id, tmp_path):
+    scenario_id = "arch_01_order_processing_fault_01"
+    arch_id = "arch_01_order_processing"
+    run_id = "test-run-002"
+    verify_failed = dict(SAMPLE_VERIFY, outcome="did_not_deploy")
+
+    _make_run_dir(tmp_path, run_id, scenario_id, verify_failed, SAMPLE_TRACE, SAMPLE_FILE_LOG)
+    _make_scenario_dir(tmp_path, scenario_id, SAMPLE_MANIFEST, "faulted: yaml")
+    _make_corpus_dir(tmp_path, arch_id, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+
+    from harness.scoring.scorer import score_run
+    result = score_run(run_id, str(tmp_path))
+
+    mock_id.assert_not_called()
+    assert result["final_score"] == 0.0
+    assert result["zero_reason"] == "did_not_deploy"
