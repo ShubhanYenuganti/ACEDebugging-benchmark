@@ -229,3 +229,137 @@ def test_regression_prompt_includes_context():
 
     assert "known_good.yaml" in prompt.lower() or "ProcessorLambdaESM" in prompt
     assert "traffic_flow" in prompt.lower() or "Hop 4" in prompt
+
+
+SAMPLE_FILE_LOG = {
+    "total_files_changed": 1,
+    "total_lines_changed": 3,
+    "files_modified": ["harness/scenarios/arch_01/known_good.yaml"],
+    "files_added": [],
+    "per_file_line_changes": {"harness/scenarios/arch_01/known_good.yaml": 3},
+}
+
+SAMPLE_TRACE = [
+    {"turn": i, "tool": f"tool_{i}", "input": {}, "output": "{}"} for i in range(6)
+]
+
+
+def test_threshold_score_curve():
+    from harness.scoring.dimensions.efficiency import threshold_score
+    assert threshold_score(5, 5) == 1.0                        # ratio 1.0
+    assert threshold_score(7, 5) == 1.0                        # ratio 1.4 <= 1.5
+    assert threshold_score(10, 5) == pytest.approx(0.8, abs=0.001)   # ratio 2.0
+    assert threshold_score(12, 5) == pytest.approx(0.64, abs=0.001)  # ratio 2.4
+    assert threshold_score(15, 5) == pytest.approx(0.4, abs=0.001)   # ratio 3.0
+    assert threshold_score(20, 5) == pytest.approx(0.0, abs=0.001)   # ratio 4.0
+    assert threshold_score(25, 5) == 0.0                       # ratio 5.0
+
+
+def test_efficiency_combined_score():
+    with patch("harness.scoring.dimensions.efficiency.call_scoring_agent") as mock_agent:
+        mock_agent.return_value = '{"rationale": "efficient"}'
+        from harness.scoring.dimensions.efficiency import score
+
+        # actual == optimal across the board -> all sub-scores 1.0 -> combined 1.0
+        manifest = dict(SAMPLE_MANIFEST)
+        manifest["optimal_tool_calls"] = len(SAMPLE_TRACE)
+        manifest["optimal_files_changed"] = SAMPLE_FILE_LOG["total_files_changed"]
+        manifest["optimal_lines_changed"] = SAMPLE_FILE_LOG["total_lines_changed"]
+
+        r = score(SAMPLE_TRACE, SAMPLE_FILE_LOG, manifest, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+        assert r["score"] == 1.0
+        assert "tool_calls" in r
+        assert "files_changed" in r
+        assert "lines_changed" in r
+
+
+def test_efficiency_agent_rationale_called_once():
+    with patch("harness.scoring.dimensions.efficiency.call_scoring_agent") as mock_agent:
+        mock_agent.return_value = '{"rationale": "some explanation"}'
+        from harness.scoring.dimensions.efficiency import score
+        r = score(SAMPLE_TRACE, SAMPLE_FILE_LOG, SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+
+    mock_agent.assert_called_once()
+    assert r["rationale"] == "some explanation"
+
+
+def test_efficiency_prompt_includes_context():
+    with patch("harness.scoring.dimensions.efficiency.call_scoring_agent") as mock_agent:
+        mock_agent.return_value = '{"rationale": "ok"}'
+        from harness.scoring.dimensions.efficiency import score
+        score(SAMPLE_TRACE, SAMPLE_FILE_LOG, SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+        prompt = mock_agent.call_args[0][1]
+
+    assert "known_good.yaml" in prompt.lower() or "ProcessorLambdaESM" in prompt
+    assert "traffic_flow" in prompt.lower() or "Hop 4" in prompt
+
+
+def _make_verify_for_gate(classification, primary_passed, regression_count):
+    return {
+        "outcome": "completed",
+        "pass1_functional": {
+            "all_assertions_passed": primary_passed and regression_count == 0,
+            "primary_assertions_passed": primary_passed,
+            "failed_assertion_names": [],
+            "assertions": ["a"],
+        },
+        "pass2_regression": {
+            "critical_regression_count": regression_count,
+            "non_critical_regression_count": 0,
+            "regression_count": regression_count,
+        },
+        "pass3_classification": {
+            "classification": classification,
+            "structural_match": classification == "root_cause",
+            "invalid_patch_detected": classification not in ("root_cause", "workaround"),
+        },
+        "pass4_concurrency": None,
+    }
+
+
+def test_check_gate_passes_for_clean_root_cause():
+    from harness.scoring.dimensions.quality import check_gate
+    v = _make_verify_for_gate("root_cause", True, 0)
+    assert check_gate(v) is True
+
+
+def test_check_gate_fails_bad_classification():
+    from harness.scoring.dimensions.quality import check_gate
+    for cls in ("partial", "none", "unknown"):
+        v = _make_verify_for_gate(cls, True, 0)
+        assert check_gate(v) is False, f"expected False for classification={cls}"
+
+
+def test_check_gate_fails_primary_not_passed():
+    from harness.scoring.dimensions.quality import check_gate
+    v = _make_verify_for_gate("root_cause", False, 0)
+    assert check_gate(v) is False
+
+
+def test_check_gate_fails_with_regression():
+    from harness.scoring.dimensions.quality import check_gate
+    v = _make_verify_for_gate("root_cause", True, 1)
+    assert check_gate(v) is False
+
+
+def test_quality_score_parses_agent_response():
+    with patch("harness.scoring.dimensions.quality.call_scoring_agent") as mock_agent:
+        mock_agent.return_value = '{"score": 0.85, "classification": "root_cause", "rationale": "clean fix"}'
+        from harness.scoring.dimensions.quality import score
+        r = score(SAMPLE_VERIFY, SAMPLE_MANIFEST, SAMPLE_FILE_LOG, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+
+    assert r["score"] == 0.85
+    assert r["classification"] == "root_cause"
+    assert r["rationale"] == "clean fix"
+
+
+def test_quality_prompt_includes_context():
+    with patch("harness.scoring.dimensions.quality.call_scoring_agent") as mock_agent:
+        mock_agent.return_value = '{"score": 1.0, "classification": "root_cause", "rationale": "ok"}'
+        from harness.scoring.dimensions.quality import score
+        score(SAMPLE_VERIFY, SAMPLE_MANIFEST, SAMPLE_FILE_LOG, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+        prompt = mock_agent.call_args[0][1]
+
+    assert "known_good.yaml" in prompt.lower() or "ProcessorLambdaESM" in prompt
+    assert "traffic_flow" in prompt.lower() or "Hop 4" in prompt
+    assert "valid_fixes" in prompt or str(SAMPLE_MANIFEST["valid_fixes"]) in prompt
