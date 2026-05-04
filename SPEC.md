@@ -954,6 +954,280 @@ without errors.
 
 ---
 
+## Phase F — Step 7 Scoring
+
+**Depends on:** Phase A (shared utilities), Phases C/D outputs on disk
+**Blocks:** nothing
+**Session scope:** complete in one session
+
+### Goal
+
+An autonomous scoring agent powered by Claude Sonnet that evaluates
+every completed run in `results/`. The agent reads the artifacts
+produced by Phases A–E, reasons across five scoring dimensions, and
+writes a structured `score.json` per run. Called by `harness/run.py`
+as the final step of the pipeline.
+
+Three dimensions require judgment (identification, quality, efficiency
+rationale); two are purely deterministic (fix correctness, regression
+penalty). This separation is explicit per module.
+
+### Deliverables
+
+```
+harness/
+└── scoring/
+    ├── agent.py              # F1 — Claude Sonnet client
+    ├── scorer.py             # F2 — orchestrator
+    ├── dimensions/
+    │   ├── identification.py # F3 — agent-evaluated
+    │   ├── fix_correctness.py # F4 — deterministic
+    │   ├── regression.py     # F5 — deterministic
+    │   ├── efficiency.py     # F6 — formula + agent rationale
+    │   └── quality.py        # F7 — agent-evaluated + gate
+    └── gate.py               # F8 — thin re-export of check_gate
+
+results/[run_id]/
+└── score.json
+```
+
+`harness/run.py` is updated (F9) to call `scorer.score_run()` after
+the verify loop and extend the terminal summary with scoring output.
+
+### F1 — `harness/scoring/agent.py`
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+SCORING_MODEL = "claude-sonnet-4-5"
+
+def call_scoring_agent(system_prompt: str, user_prompt: str) -> str:
+    message = client.messages.create(
+        model=SCORING_MODEL,
+        max_tokens=1024,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}]
+    )
+    return message.content[0].text.strip()
+```
+
+System prompt used for all calls:
+```
+You are an autonomous infrastructure debugging benchmark scorer.
+You evaluate AI model runs against a known-good AWS architecture.
+You will be given the fault injected, the model's tool-call trace,
+file changes, and verify loop result.
+Return ONLY valid JSON matching the schema in each prompt.
+No explanation outside the JSON. No markdown fences.
+Every numeric score must be a float between 0.0 and 1.0.
+Every rationale field must be 1–2 sentences explaining the score.
+```
+
+### F2 — `harness/scoring/scorer.py`
+
+`score_run(run_id: str, scenario_dir: str) -> dict`
+
+Execution order:
+1. Load `verify_result.json`, `tool_call_trace.json`, `file_change_log.json`,
+   `fault_manifest.json`, `faulted.yaml`, `known_good.yaml`. Missing file →
+   write `score.json` with `final_score: 0.0, zero_reason: "missing_artifacts"`.
+2. If `verify_result["outcome"] != "completed"` → write zero score with
+   `zero_reason: verify_result["outcome"]`. Return — no agent calls.
+3. `gate.check_quality_gate(verify_result)` → if False, write
+   `final_score: 0.0, quality_threshold_met: false, zero_reason: "quality_gate_failed"`.
+4. Score all five dimensions:
+   ```python
+   d1 = identification.score(tool_trace, manifest, verify_result)
+   d2 = fix_correctness.score(verify_result)
+   d3 = regression.compute(verify_result)
+   d4 = efficiency.score(tool_trace, file_log, manifest)
+   d5 = quality.score(verify_result, manifest, file_log)
+   ```
+5. Composite formula:
+   ```python
+   weighted  = (d1["score"] * 0.20) + (d2["score"] * 0.25) \
+             + (d4["score"] * 0.15) + (d5["score"] * 0.40)
+   composite = max(0.0, round(weighted - d3["penalty"], 4))
+   ```
+6. Interpret composite: ≥0.90 root-cause + clean; ≥0.75 minor concern;
+   ≥0.50 workaround or regressions; ≥0.25 partial; else failed.
+7. Write `results/[run_id]/score.json`.
+
+`score.json` schema:
+```json
+{
+  "run_id": "...", "scenario_id": "...", "scored_by": "claude-sonnet-4-5",
+  "quality_threshold_met": true, "zero_reason": null,
+  "dimensions": {
+    "identification":     {"score": 0.0, "rationale": "..."},
+    "fix_correctness":    {"score": 0.0, "rationale": "..."},
+    "regression_penalty": {"penalty": 0.0, "rationale": "..."},
+    "efficiency": {
+      "score": 0.0, "rationale": "...",
+      "tool_calls":    {"actual": 0, "optimal": 0, "ratio": 0.0, "score": 0.0},
+      "files_changed": {"actual": 0, "optimal": 0, "ratio": 0.0, "score": 0.0},
+      "lines_changed": {"actual": 0, "optimal": 0, "ratio": 0.0, "score": 0.0}
+    },
+    "quality": {"score": 0.0, "classification": "...", "rationale": "..."}
+  },
+  "weighted": 0.0, "composite": 0.0, "final_score": 0.0, "interpretation": "..."
+}
+```
+
+### F3 — `harness/scoring/dimensions/identification.py`
+
+**Dimension 1 — Issue Identification (weight: 0.20) — Claude Sonnet**
+
+`score(tool_trace, manifest, verify_result) -> dict`
+
+Prompt gives agent the tool-call trace, injected fault definition, and
+fix classification. Rubric: 1.0 if correct resource+property surfaced
+before fix; 0.5 if resource correct but property wrong or late; 0.3 if
+traces show no clear identification (possible guess); 0.1 if wrong
+resource; 0.0 if no traceable diagnosis.
+
+Returns: `{"score": float, "rationale": str}`
+
+### F4 — `harness/scoring/dimensions/fix_correctness.py`
+
+**Dimension 2 — Fix Correctness (weight: 0.25) — deterministic**
+
+`score(verify_result) -> dict`
+
+```python
+p1 = verify_result["pass1_functional"]
+if p1["all_assertions_passed"]:           s = 1.0
+elif p1["primary_assertions_passed"]:     s = 0.6
+elif len(p1["failed_assertion_names"]) < len(p1["assertions"]): s = 0.3
+else:                                     s = 0.0
+```
+
+Returns: `{"score": float, "rationale": str}`
+
+### F5 — `harness/scoring/dimensions/regression.py`
+
+**Dimension 3 — Regression Penalty (subtracted from composite) — deterministic**
+
+`compute(verify_result) -> dict`
+
+```python
+p2 = verify_result["pass2_regression"]
+critical, non_critical = p2["critical_regression_count"], p2["non_critical_regression_count"]
+if critical > 1 or (critical >= 1 and non_critical >= 1): penalty = 0.28
+elif critical == 1:                                        penalty = 0.18
+elif non_critical == 1:                                    penalty = 0.08
+else:                                                      penalty = 0.00
+```
+
+Returns: `{"penalty": float, "rationale": str}`
+
+### F6 — `harness/scoring/dimensions/efficiency.py`
+
+**Dimension 4 — Efficiency (weight: 0.15) — formula + agent rationale**
+
+`score(tool_trace, file_log, manifest) -> dict`
+
+Sub-score formula for all three signals:
+```python
+def threshold_score(actual, optimal):
+    if optimal == 0: return 1.0 if actual == 0 else 0.0
+    ratio = actual / optimal
+    if ratio <= 1.5:   return 1.0
+    elif ratio <= 2.5: return 1.0 - 0.4 * (ratio - 1.5)
+    elif ratio <= 4.0: return 0.6 - 0.4 * (ratio - 2.5)
+    else:              return 0.0
+```
+
+Combined: `(tc_score * 0.50) + (fc_score * 0.25) + (lc_score * 0.25)`
+
+After computing sub-scores, calls `call_scoring_agent` once to generate
+the `rationale` field explaining what the scores reveal about diagnostic
+efficiency. Agent receives actuals, optimals, ratios, and tool name list.
+
+Returns: full dict with score, rationale, and per-signal breakdown.
+
+### F7 — `harness/scoring/dimensions/quality.py`
+
+**Dimension 5 — Fix Quality (weight: 0.40, dominant) — Claude Sonnet**
+
+Contains both the quality gate check and the quality score.
+
+`check_gate(verify_result) -> bool`
+```python
+classification_ok = p3["classification"] in ("root_cause", "workaround")
+assertions_ok     = p1["primary_assertions_passed"]
+no_regressions    = p2["regression_count"] == 0
+return classification_ok and assertions_ok and no_regressions
+```
+
+`score(verify_result, manifest, file_log) -> dict`
+
+Prompt gives agent fault definition, valid_fixes, invalid_patches,
+files changed, line-level changes, and verify loop signals. Rubric:
+1.00 root cause + clean; 0.85 root cause + minor concern; 0.60
+over-permissive fix; 0.35 workaround; 0.15 partial; 0.00 none.
+
+Returns: `{"score": float, "classification": str, "rationale": str}`
+
+### F8 — `harness/scoring/gate.py`
+
+```python
+from harness.scoring.dimensions.quality import check_gate
+```
+
+Thin re-export so scorer imports the gate from one place.
+
+### F9 — Update `harness/run.py`
+
+After the verify loop call, add:
+```python
+from harness.scoring.scorer import score_run
+# ...
+print("[scorer] Running Step 7 scoring agent (Claude Sonnet)...")
+score = score_run(run_id, scenario_dir)
+```
+
+Extend terminal summary with scoring block:
+```
+── Scoring (Claude Sonnet) ─────────────
+Quality gate:     [PASS | FAIL → score zeroed]
+Identification:   [0.00]  [rationale]
+Fix correctness:  [0.00]  [rationale]
+Regression:      −[0.00]  [rationale]
+Efficiency:       [0.00]  [rationale]
+Quality:          [0.00]  [rationale]
+────────────────────────────────────────
+Final score:      [0.0000]
+Interpretation:   [interpretation string]
+────────────────────────────────────────
+```
+
+### F — Verification
+
+Write `tests/test_scoring.py`:
+
+- **F1:** mock `anthropic.Anthropic().messages.create`; assert text content
+  returned; assert raises clearly on API failure.
+- **F3:** mock `call_scoring_agent`; assert prompt differs between a trace
+  that includes `ace_get_iam_role` and one that does not; assert score/rationale
+  extracted correctly.
+- **F4:** four hand-crafted `verify_result` dicts covering 1.0, 0.6, 0.3, 0.0
+  outcomes; no agent call.
+- **F5:** verify_results with 0, 1 non-critical, 1 critical, multiple
+  regressions; assert penalties 0.00, 0.08, 0.18, 0.28.
+- **F6:** test `threshold_score` at ratios 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0;
+  test combined score with known inputs; mock rationale call.
+- **F7 gate:** each gate failure mode returns False; clean root_cause returns True.
+- **F7 score:** mock agent for each of the six quality classifications; assert
+  score extracted and classification populated.
+- **F2 integration:** mock all dimension modules; run `score_run` with
+  hand-crafted inputs; assert `score.json` written with correct structure and
+  composite formula applied; assert early-exit paths (did_not_deploy, gate
+  failure) write zero-score JSON and make no agent calls.
+
+---
+
 ## Dependency Summary
 
 ```
@@ -972,6 +1246,10 @@ Phase A (shared utilities)
          [D verified]
               │
          Phase E (entry point + e2e test)
+              │
+         [E verified]
+              │
+         Phase F (scoring agent)
 ```
 
 No phase should begin until all phases it depends on have passed

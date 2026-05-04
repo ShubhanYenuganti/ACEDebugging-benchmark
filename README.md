@@ -34,6 +34,7 @@ The model never sees `fault_manifest.json` or `known_good.yaml`. It only sees th
 | **C** | Scenario runner + deployment handler (deploy faulted template, intercept fix submission) | ✅ Complete — 8/8 tests passing |
 | **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | ✅ Complete — 20/20 tests passing |
 | **E** | Harness entry point `run.py` — ties all phases together end-to-end | ✅ Complete — E2E test passing (45/45 Python tests, exit 0, classification `root_cause`) |
+| **F** | Autonomous scoring agent — Claude Sonnet scores 5 dimensions, writes `score.json` | 🔲 Not started |
 
 ---
 
@@ -125,10 +126,24 @@ ace-bench/
 │   │   ├── pass3_classification.py # Structural diff + invalid patch detection
 │   │   ├── pass4_concurrency.py    # N concurrent requests, classify by status code
 │   │   └── verify_loop.py          # Orchestrate all 4 passes, write verify_result.json
-│   └── run.py                # Phase E — CLI entry point (argparse + dotenv + verify orchestration)
+│   ├── run.py                # Phase E — CLI entry point (argparse + dotenv + verify orchestration)
+│   └── scoring/              # Phase F — autonomous scoring agent
+│       ├── agent.py                # Claude Sonnet client (call_scoring_agent)
+│       ├── scorer.py               # Orchestrator: load inputs → score → write score.json
+│       ├── gate.py                 # Re-exports check_gate from quality.py
+│       └── dimensions/
+│           ├── identification.py   # D1: agent-evaluated (weight 0.20)
+│           ├── fix_correctness.py  # D2: deterministic from pass1 (weight 0.25)
+│           ├── regression.py       # D3: deterministic penalty (subtracted)
+│           ├── efficiency.py       # D4: threshold formula + agent rationale (weight 0.15)
+│           └── quality.py          # D5: agent-evaluated + quality gate (weight 0.40)
 ├── corpus/                   # Known-good templates + functional tests (HITL-built)
 ├── scenarios/                # Faulted deployments for evaluation runs
 ├── results/                  # Per-run output (gitignored)
+│   └── [run_id]/
+│       ├── scenario_id.txt, tool_call_trace.json, file_change_log.json
+│       ├── faulted_baseline.json, verify_result.json
+│       └── score.json              # Written by Phase F after every completed run
 ├── tests/
 │   ├── stubs/
 │   │   └── stub_model.py     # E2E: applies known fix, triggers redeployment
@@ -136,7 +151,8 @@ ace-bench/
 │   ├── test_mcp_server.js    # Phase B gate (node:test) — 15 tests
 │   ├── test_runner.py        # Phase C gate (pytest) — 8 tests
 │   ├── test_verify.py        # Phase D gate (pytest) — 20 tests
-│   └── test_e2e.py           # Phase E gate (pytest, requires live LocalStack) — 1 test
+│   ├── test_e2e.py           # Phase E gate (pytest, requires live LocalStack) — 1 test
+│   └── test_scoring.py       # Phase F gate (pytest, mocked Anthropic API)
 └── SPEC.md                   # Full design spec
 ```
 
@@ -181,14 +197,30 @@ Score tools return `{"error": "unauthorized"}` without a valid key — they are 
 
 ## Scoring
 
-A completed run is scored across four passes:
+### Verify loop (Phases D/E) — four passes
 
 1. **Functional** — runs `functional_test.py`; checks `ASSERT pass/fail` lines
 2. **Regression** — compares assertions against the faulted baseline; flags anything that passed before the fix and fails after
 3. **Classification** — structural diff of the submitted vs faulted template against `fault_manifest.json`; classifies as `root_cause`, `workaround`, `partial`, or `none`
 4. **Concurrency** — for `performance`/`reliability` fault classes: N concurrent requests; passes only if zero throttles and zero timeouts
 
-Quality (classification) is the dominant scoring weight. A model that deploys a working workaround scores lower than one that addresses the root cause.
+### Scoring agent (Phase F) — five dimensions
+
+After every completed run, a Claude Sonnet agent reads all run artifacts and writes `results/[run_id]/score.json`:
+
+| Dimension | Weight | Method |
+|-----------|--------|--------|
+| Identification | 0.20 | Claude Sonnet — did the tool-call trace show diagnostic reasoning? |
+| Fix correctness | 0.25 | Deterministic — derived from pass1 functional test result |
+| Regression penalty | subtracted | Deterministic — 0.00 / 0.08 / 0.18 / 0.28 by severity |
+| Efficiency | 0.15 | Formula (threshold curve on tool calls, files, lines) + agent rationale |
+| Quality | 0.40 | Claude Sonnet — is the fix production-viable and correctly scoped? |
+
+**Quality gate:** before any scoring, `check_gate` verifies classification is `root_cause` or `workaround`, primary assertions passed, and no regressions. Failure zeros the entire score.
+
+**Composite:** `max(0, (d1×0.20 + d2×0.25 + d4×0.15 + d5×0.40) − regression_penalty)`
+
+Quality is the dominant weight and cannot be overcome by speed or efficiency alone.
 
 ---
 

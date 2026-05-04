@@ -116,11 +116,11 @@ def _print_score_summary(score: dict) -> None:
     dims = score.get("dimensions", {})
     if not dims:
         gate_str = "FAIL → score zeroed" if not score.get("quality_threshold_met") else "N/A"
-        print(f"── Scoring (Claude Sonnet) ─────────────")
+        print("── Scoring (Claude Sonnet) ─────────────")
         print(f"Quality gate:     {gate_str}")
         print(f"Zero reason:      {score.get('zero_reason', 'unknown')}")
         print(f"Final score:      {score.get('final_score', 0.0):.4f}")
-        print(f"────────────────────────────────────────")
+        print("────────────────────────────────────────")
         print()
         return
 
@@ -130,17 +130,17 @@ def _print_score_summary(score: dict) -> None:
     d4 = dims.get("efficiency", {})
     d5 = dims.get("quality", {})
 
-    print(f"── Scoring (Claude Sonnet) ─────────────")
+    print("── Scoring (Claude Sonnet) ─────────────")
     print(f"Quality gate:     {'PASS' if score.get('quality_threshold_met') else 'FAIL → score zeroed'}")
     print(f"Identification:   {d1.get('score', 0):.2f}  {d1.get('rationale', '')}")
     print(f"Fix correctness:  {d2.get('score', 0):.2f}  {d2.get('rationale', '')}")
     print(f"Regression:      -{d3.get('penalty', 0):.2f}  {d3.get('rationale', '')}")
     print(f"Efficiency:       {d4.get('score', 0):.2f}  {d4.get('rationale', '')}")
     print(f"Quality:          {d5.get('score', 0):.2f}  {d5.get('rationale', '')}")
-    print(f"────────────────────────────────────────")
+    print("────────────────────────────────────────")
     print(f"Final score:      {score.get('final_score', 0.0):.4f}")
     print(f"Interpretation:   {score.get('interpretation', '')}")
-    print(f"────────────────────────────────────────")
+    print("────────────────────────────────────────")
     print()
 
 

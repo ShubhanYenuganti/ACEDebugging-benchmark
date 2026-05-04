@@ -1,3 +1,6 @@
+import json
+import pathlib
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -23,8 +26,6 @@ def test_call_scoring_agent_propagates_api_error():
         with pytest.raises(Exception, match="API error"):
             call_scoring_agent("sys", "user")
 
-
-import json
 
 SAMPLE_MANIFEST = {
     "target_resource": "ProcessorLambdaESM",
@@ -365,9 +366,6 @@ def test_quality_prompt_includes_context():
     assert "valid_fixes" in prompt or str(SAMPLE_MANIFEST["valid_fixes"]) in prompt
 
 
-import os, pathlib, importlib
-
-
 def _write_file(path: pathlib.Path, content: str):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
@@ -420,7 +418,7 @@ def test_scorer_writes_score_json(mock_q, mock_e, mock_r, mock_fc, mock_id, tmp_
     _make_corpus_dir(tmp_path, arch_id, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
 
     from harness.scoring.scorer import score_run
-    result = score_run(run_id, str(tmp_path))
+    score_run(run_id, str(tmp_path))
 
     score_path = tmp_path / "results" / run_id / "score.json"
     assert score_path.exists(), "score.json was not written"
