@@ -208,6 +208,33 @@ def test_loop_exits_on_stop_reason(tmp_path):
     assert submitted is False
 
 
+def test_loop_exits_on_end_turn(tmp_path):
+    """finish_reason='end_turn' (Anthropic) — loop exits, submitted=False."""
+    from harness.agent.loop import run_agent_loop
+
+    with patch("harness.agent.loop.litellm.completion") as mock_llm, \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        mock_llm.return_value = _make_litellm_response("end_turn", content="Done.")
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        submitted = asyncio.run(run_agent_loop(
+            model="anthropic/claude-sonnet-4-6",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "brief", "instruction": "fix it",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t006",
+            harness_api_key="hk",
+            max_turns=5,
+        ))
+
+    assert submitted is False
+
+
 def test_loop_exits_on_submit_fix(tmp_path, monkeypatch):
     """Model calls submit_fix — loop exits with submitted=True, signal file written."""
     import harness.agent.tools as t_mod

@@ -108,22 +108,32 @@ async def run_agent_loop(
             tool_results = []
             for tc in msg.tool_calls:
                 name = tc.function.name
-                args = json.loads(tc.function.arguments or "{}")
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except (json.JSONDecodeError, ValueError):
+                    args = {}
 
                 if name in _FILE_TOOL_NAMES:
                     content = dispatch_file_tool(name, args, scenario_dir)
                     if name == "submit_fix":
                         submitted = True
                 else:
-                    mcp_result = await session.call_tool(name, args)
-                    raw = mcp_result.content[0].text if mcp_result.content else "{}"
+                    try:
+                        mcp_result = await session.call_tool(name, args)
+                        raw = mcp_result.content[0].text if mcp_result.content else "{}"
+                    except Exception as exc:
+                        raw = f"Error calling {name}: {exc}"
                     content = raw
+                    try:
+                        output = json.loads(raw)
+                    except (json.JSONDecodeError, ValueError):
+                        output = {"raw": raw}
                     result_logger.log_tool_call(
                         run_id=run_id,
                         turn=turn,
                         tool=name,
                         input=args,
-                        output=json.loads(raw) if raw.strip().startswith("{") else {"raw": raw},
+                        output=output,
                         timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
                     )
 
