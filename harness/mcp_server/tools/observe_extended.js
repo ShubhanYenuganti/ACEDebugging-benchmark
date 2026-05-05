@@ -1,4 +1,6 @@
 import { SNSClient, GetTopicAttributesCommand } from "@aws-sdk/client-sns";
+import { EventBridgeClient, DescribeRuleCommand, ListTargetsByRuleCommand } from "@aws-sdk/client-eventbridge";
+import { SchedulerClient, GetScheduleCommand } from "@aws-sdk/client-scheduler";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -7,6 +9,8 @@ const awsConfig = {
 };
 
 const snsClient = new SNSClient(awsConfig);
+const ebClient = new EventBridgeClient(awsConfig);
+const schedulerClient = new SchedulerClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -33,6 +37,69 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SNS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_eventbridge_rule",
+    description: "Describe an EventBridge rule including its schedule expression, event pattern, and targets",
+    inputSchema: {
+      type: "object",
+      properties: {
+        rule_name: { type: "string" },
+        bus_name: { type: "string" },
+      },
+      required: ["rule_name"],
+    },
+    async handler({ rule_name, bus_name = "default" } = {}) {
+      if (!rule_name) return { error: "rule_name is required" };
+      try {
+        const [ruleRes, targetsRes] = await Promise.all([
+          ebClient.send(new DescribeRuleCommand({ Name: rule_name, EventBusName: bus_name })),
+          ebClient.send(new ListTargetsByRuleCommand({ Rule: rule_name, EventBusName: bus_name })),
+        ]);
+        return {
+          name: ruleRes.Name,
+          arn: ruleRes.Arn,
+          state: ruleRes.State,
+          schedule_expression: ruleRes.ScheduleExpression ?? null,
+          event_pattern: ruleRes.EventPattern ? JSON.parse(ruleRes.EventPattern) : null,
+          description: ruleRes.Description ?? null,
+          targets_count: targetsRes.Targets?.length ?? 0,
+          targets: (targetsRes.Targets ?? []).map(t => ({ id: t.Id, arn: t.Arn })),
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "EB_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_schedule",
+    description: "Describe an EventBridge Scheduler schedule including expression, target ARN, and state",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        group_name: { type: "string" },
+      },
+      required: ["name"],
+    },
+    async handler({ name, group_name = "default" } = {}) {
+      if (!name) return { error: "name is required" };
+      try {
+        const res = await schedulerClient.send(new GetScheduleCommand({ Name: name, GroupName: group_name }));
+        return {
+          name: res.Name,
+          arn: res.Arn,
+          state: res.State,
+          schedule_expression: res.ScheduleExpression,
+          target_arn: res.Target?.Arn ?? null,
+          role_arn: res.Target?.RoleArn ?? null,
+          description: res.Description ?? null,
+          flexible_window_minutes: res.FlexibleTimeWindow?.MaximumWindowInMinutes ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SCHEDULER_ERROR" };
       }
     },
   },

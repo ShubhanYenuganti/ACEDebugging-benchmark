@@ -242,3 +242,39 @@ test("ace_get_sns_topic: missing args returns error", async () => {
   const result = await observeExtendedTools.find(t => t.name === "ace_get_sns_topic").handler({});
   assert.ok(result.error);
 });
+
+// === EventBridge ===
+test("ace_put_events: returns failed_entry_count and entries array", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_put_events")
+    .handler({ bus_name: "default", source: "test.source", detail_type: "TestEvent", detail: { key: "val" } });
+  assert.ok("failed_entry_count" in result, JSON.stringify(result));
+  assert.ok(Array.isArray(result.entries));
+});
+
+test("ace_put_events: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_put_events").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_get_eventbridge_rule: nonexistent rule returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_eventbridge_rule")
+    .handler({ rule_name: "no-such-rule-xyz" });
+  assert.ok(result.error);
+});
+
+test("ace_get_eventbridge_rule: missing args returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_eventbridge_rule").handler({});
+  assert.ok(result.error);
+});
+
+// === EventBridge Scheduler ===
+test("ace_get_schedule: nonexistent schedule returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_schedule")
+    .handler({ name: "no-such-schedule-xyz" });
+  assert.ok(result.error);
+});
+
+test("ace_get_schedule: missing args returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_schedule").handler({});
+  assert.ok(result.error);
+});
