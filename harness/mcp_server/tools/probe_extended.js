@@ -6,6 +6,7 @@ import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { EC2Client, DescribeInstancesCommand } from "@aws-sdk/client-ec2";
 import { Route53Client, GetHostedZoneCommand } from "@aws-sdk/client-route-53";
 import { Route53ResolverClient, ListResolverEndpointsCommand } from "@aws-sdk/client-route53resolver";
+import { KinesisClient, PutRecordCommand as KinesisPutRecordCommand } from "@aws-sdk/client-kinesis";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -21,6 +22,7 @@ const sesClient = new SESClient(awsConfig);
 const ec2Client = new EC2Client(awsConfig);
 const r53Client = new Route53Client(awsConfig);
 const r53ResolverClient = new Route53ResolverClient(awsConfig);
+const kinesisClient = new KinesisClient(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -249,6 +251,37 @@ export const probeExtendedTools = [
         }));
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "R53R_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_put_kinesis_record",
+    description: "Put a test record to a Kinesis data stream and return the shard ID and sequence number",
+    inputSchema: {
+      type: "object",
+      properties: {
+        stream_name: { type: "string" },
+        data: { type: "string" },
+        partition_key: { type: "string" },
+      },
+      required: ["stream_name", "data", "partition_key"],
+    },
+    async handler({ stream_name, data, partition_key } = {}) {
+      if (!stream_name || !data || !partition_key)
+        return { error: "stream_name, data, and partition_key are required" };
+      try {
+        const res = await kinesisClient.send(new KinesisPutRecordCommand({
+          StreamName: stream_name,
+          Data: Buffer.from(data),
+          PartitionKey: partition_key,
+        }));
+        return {
+          shard_id: res.ShardId,
+          sequence_number: res.SequenceNumber,
+          encryption_type: res.EncryptionType ?? "NONE",
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "KINESIS_ERROR" };
       }
     },
   },

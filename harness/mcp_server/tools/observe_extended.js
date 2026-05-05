@@ -7,6 +7,7 @@ import { SESClient, GetIdentityVerificationAttributesCommand } from "@aws-sdk/cl
 import { EC2Client, DescribeSecurityGroupsCommand } from "@aws-sdk/client-ec2";
 import { Route53Client, ListResourceRecordSetsCommand } from "@aws-sdk/client-route-53";
 import { Route53ResolverClient, GetResolverEndpointCommand } from "@aws-sdk/client-route53resolver";
+import { KinesisClient, DescribeStreamSummaryCommand } from "@aws-sdk/client-kinesis";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -23,6 +24,7 @@ const sesClient = new SESClient(awsConfig);
 const ec2Client = new EC2Client(awsConfig);
 const r53Client = new Route53Client(awsConfig);
 const r53ResolverClient = new Route53ResolverClient(awsConfig);
+const kinesisClient = new KinesisClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -286,6 +288,32 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "R53R_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_describe_kinesis_stream",
+    description: "Describe a Kinesis data stream including shard count, retention period, and encryption",
+    inputSchema: {
+      type: "object",
+      properties: { stream_name: { type: "string" } },
+      required: ["stream_name"],
+    },
+    async handler({ stream_name } = {}) {
+      if (!stream_name) return { error: "stream_name is required" };
+      try {
+        const res = await kinesisClient.send(new DescribeStreamSummaryCommand({ StreamName: stream_name }));
+        const s = res.StreamDescriptionSummary;
+        return {
+          stream_arn: s?.StreamARN,
+          stream_status: s?.StreamStatus,
+          shard_count: s?.OpenShardCount,
+          retention_period_hours: s?.RetentionPeriodHours,
+          encryption_type: s?.EncryptionType ?? "NONE",
+          key_id: s?.KeyId ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "KINESIS_ERROR" };
       }
     },
   },

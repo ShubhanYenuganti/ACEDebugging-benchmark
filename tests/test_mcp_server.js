@@ -401,3 +401,30 @@ test("ace_get_resolver_endpoint: missing args returns error", async () => {
   const result = await observeExtendedTools.find(t => t.name === "ace_get_resolver_endpoint").handler({});
   assert.ok(result.error);
 });
+
+// === Kinesis Streams ===
+test("ace_put_kinesis_record: returns shard_id and sequence_number", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_put_kinesis_record")
+    .handler({ stream_name: KINESIS_STREAM, data: "hello-world", partition_key: "pk-1" });
+  assert.ok("shard_id" in result, JSON.stringify(result));
+  assert.ok("sequence_number" in result);
+});
+
+test("ace_put_kinesis_record: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_put_kinesis_record").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_describe_kinesis_stream: returns stream status and shard count", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_kinesis_stream")
+    .handler({ stream_name: KINESIS_STREAM });
+  assert.ok("stream_status" in result, JSON.stringify(result));
+  assert.ok("shard_count" in result);
+  assert.ok("retention_period_hours" in result);
+});
+
+test("ace_describe_kinesis_stream: nonexistent stream returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_kinesis_stream")
+    .handler({ stream_name: "no-such-stream-xyz" });
+  assert.ok(result.error, JSON.stringify(result));
+});
