@@ -1,6 +1,8 @@
 import { SNSClient, GetTopicAttributesCommand } from "@aws-sdk/client-sns";
 import { EventBridgeClient, DescribeRuleCommand, ListTargetsByRuleCommand } from "@aws-sdk/client-eventbridge";
 import { SchedulerClient, GetScheduleCommand } from "@aws-sdk/client-scheduler";
+import { SFNClient, DescribeStateMachineCommand } from "@aws-sdk/client-sfn";
+import { SWFClient, DescribeDomainCommand } from "@aws-sdk/client-swf";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -11,6 +13,8 @@ const awsConfig = {
 const snsClient = new SNSClient(awsConfig);
 const ebClient = new EventBridgeClient(awsConfig);
 const schedulerClient = new SchedulerClient(awsConfig);
+const sfnClient = new SFNClient(awsConfig);
+const swfClient = new SWFClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -100,6 +104,59 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SCHEDULER_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_describe_state_machine",
+    description: "Describe a Step Functions state machine configuration, type, role, and state count",
+    inputSchema: {
+      type: "object",
+      properties: { state_machine_arn: { type: "string" } },
+      required: ["state_machine_arn"],
+    },
+    async handler({ state_machine_arn } = {}) {
+      if (!state_machine_arn) return { error: "state_machine_arn is required" };
+      try {
+        const res = await sfnClient.send(new DescribeStateMachineCommand({
+          stateMachineArn: state_machine_arn,
+        }));
+        const def = JSON.parse(res.definition ?? "{}");
+        return {
+          name: res.name,
+          arn: res.stateMachineArn,
+          status: res.status,
+          type: res.type,
+          role_arn: res.roleArn,
+          state_count: Object.keys(def.States ?? {}).length,
+          logging_level: res.loggingConfiguration?.level ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SFN_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_describe_swf_domain",
+    description: "Describe an SWF domain status and workflow execution retention period",
+    inputSchema: {
+      type: "object",
+      properties: { domain: { type: "string" } },
+      required: ["domain"],
+    },
+    async handler({ domain } = {}) {
+      if (!domain) return { error: "domain is required" };
+      try {
+        const res = await swfClient.send(new DescribeDomainCommand({ name: domain }));
+        return {
+          name: res.domainInfo?.name,
+          status: res.domainInfo?.status,
+          description: res.domainInfo?.description ?? null,
+          workflow_execution_retention_period_days:
+            res.configuration?.workflowExecutionRetentionPeriodInDays ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SWF_ERROR" };
       }
     },
   },

@@ -278,3 +278,39 @@ test("ace_get_schedule: missing args returns error", async () => {
   const result = await observeExtendedTools.find(t => t.name === "ace_get_schedule").handler({});
   assert.ok(result.error);
 });
+
+// === Step Functions ===
+test("ace_start_execution: nonexistent state machine returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_start_execution")
+    .handler({ state_machine_arn: "arn:aws:states:us-east-1:000000000000:stateMachine:no-such-sm" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_start_execution: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_start_execution").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_describe_state_machine: nonexistent SM returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_state_machine")
+    .handler({ state_machine_arn: "arn:aws:states:us-east-1:000000000000:stateMachine:no-such-sm" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+// === SWF ===
+test("ace_count_open_executions: nonexistent domain returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_count_open_executions")
+    .handler({ domain: "no-such-domain-xyz" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_count_open_executions: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_count_open_executions").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_describe_swf_domain: nonexistent domain returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_swf_domain")
+    .handler({ domain: "no-such-domain-xyz" });
+  assert.ok(result.error, JSON.stringify(result));
+});

@@ -1,5 +1,7 @@
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge";
+import { SFNClient, StartExecutionCommand, DescribeExecutionCommand } from "@aws-sdk/client-sfn";
+import { SWFClient, CountOpenWorkflowExecutionsCommand } from "@aws-sdk/client-swf";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -9,6 +11,8 @@ const awsConfig = {
 
 const snsClient = new SNSClient(awsConfig);
 const ebClient = new EventBridgeClient(awsConfig);
+const sfnClient = new SFNClient(awsConfig);
+const swfClient = new SWFClient(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -72,6 +76,63 @@ export const probeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "EB_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_start_execution",
+    description: "Start a Step Functions state machine execution and poll up to 2 s for its terminal status",
+    inputSchema: {
+      type: "object",
+      properties: {
+        state_machine_arn: { type: "string" },
+        input: { type: "object" },
+      },
+      required: ["state_machine_arn"],
+    },
+    async handler({ state_machine_arn, input = {} } = {}) {
+      if (!state_machine_arn) return { error: "state_machine_arn is required" };
+      try {
+        const startRes = await sfnClient.send(new StartExecutionCommand({
+          stateMachineArn: state_machine_arn,
+          input: JSON.stringify(input),
+        }));
+        await new Promise(r => setTimeout(r, 2000));
+        const descRes = await sfnClient.send(new DescribeExecutionCommand({
+          executionArn: startRes.executionArn,
+        }));
+        return {
+          execution_arn: startRes.executionArn,
+          status: descRes.status,
+          started_at: descRes.startDate?.toISOString() ?? null,
+          stopped_at: descRes.stopDate?.toISOString() ?? null,
+          output: descRes.output ? JSON.parse(descRes.output) : null,
+          error: descRes.error ?? null,
+          cause: descRes.cause ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SFN_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_count_open_executions",
+    description: "Count open SWF workflow executions in a domain over the past 7 days",
+    inputSchema: {
+      type: "object",
+      properties: { domain: { type: "string" } },
+      required: ["domain"],
+    },
+    async handler({ domain } = {}) {
+      if (!domain) return { error: "domain is required" };
+      try {
+        const res = await swfClient.send(new CountOpenWorkflowExecutionsCommand({
+          domain,
+          startTimeFilter: { oldestDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+        }));
+        return { count: res.count, truncated: res.truncated };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SWF_ERROR" };
       }
     },
   },
