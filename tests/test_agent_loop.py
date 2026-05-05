@@ -94,6 +94,12 @@ def test_write_file_blocked_outside_deployment(tmp_path):
     assert "not allowed" in result.lower()
 
 
+def test_write_file_blocks_path_traversal(tmp_path):
+    from harness.agent.tools import dispatch_file_tool
+    result = dispatch_file_tool("write_file", {"path": "deployment/../../etc/passwd", "content": "x"}, str(tmp_path))
+    assert "not allowed" in result.lower()
+
+
 def test_list_directory(tmp_path):
     from harness.agent.tools import dispatch_file_tool
     (tmp_path / "deployment" / "lambda").mkdir(parents=True)
@@ -112,6 +118,12 @@ def test_submit_fix_writes_signal(tmp_path, monkeypatch):
     assert "submitted" in result.lower()
     data = json.loads(pathlib.Path(signal_path).read_text())
     assert data == {"trigger": "update-stack"}
+
+
+def test_dispatch_unknown_tool(tmp_path):
+    from harness.agent.tools import dispatch_file_tool
+    result = dispatch_file_tool("nonexistent_tool", {}, str(tmp_path))
+    assert "unknown" in result.lower()
 
 
 def test_file_tool_definitions_are_openai_format():
