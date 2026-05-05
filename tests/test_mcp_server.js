@@ -5,10 +5,18 @@ import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
 import { SQSClient, CreateQueueCommand } from "@aws-sdk/client-sqs";
 import { CloudFormationClient, CreateStackCommand } from "@aws-sdk/client-cloudformation";
 import JSZip from "jszip";
+import { SNSClient, CreateTopicCommand } from "@aws-sdk/client-sns";
+import { KinesisClient, CreateStreamCommand } from "@aws-sdk/client-kinesis";
+import { KMSClient, CreateKeyCommand } from "@aws-sdk/client-kms";
+import { SecretsManagerClient, CreateSecretCommand } from "@aws-sdk/client-secrets-manager";
+import { SSMClient, PutParameterCommand } from "@aws-sdk/client-ssm";
 
 import { probeTools } from "../harness/mcp_server/tools/probe.js";
 import { observeTools } from "../harness/mcp_server/tools/observe.js";
 import { scoreTools } from "../harness/mcp_server/tools/score.js";
+
+import { probeExtendedTools } from "../harness/mcp_server/tools/probe_extended.js";
+import { observeExtendedTools } from "../harness/mcp_server/tools/observe_extended.js";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -21,9 +29,21 @@ const dynamo = new DynamoDBClient(awsConfig);
 const sqs = new SQSClient(awsConfig);
 const cf = new CloudFormationClient(awsConfig);
 
+const snsCl = new SNSClient(awsConfig);
+const kinesisCl = new KinesisClient(awsConfig);
+const kmsCl = new KMSClient(awsConfig);
+const secretsCl = new SecretsManagerClient(awsConfig);
+const ssmCl = new SSMClient(awsConfig);
+
 const FN = "test-identity-fn";
 const TABLE = "test-table";
 const QUEUE = "test-queue";
+
+let TOPIC_ARN;
+let KEY_ID;
+const KINESIS_STREAM = "test-kinesis-stream";
+const SECRET_NAME = "test-secret-mcp";
+const PARAM_NAME = "/test/mcp/param";
 
 function tool(list, name) {
   return list.find(t => t.name === name);
@@ -60,6 +80,39 @@ before(async () => {
   ]) {
     try { await op(); } catch (e) { if (!e.message?.includes("already exist")) throw e; }
   }
+
+  // SNS topic (CreateTopic is idempotent — always returns ARN)
+  const topicRes = await snsCl.send(new CreateTopicCommand({ Name: "test-topic" }));
+  TOPIC_ARN = topicRes.TopicArn;
+
+  // Kinesis stream (not idempotent — ignore ResourceInUseException)
+  try {
+    await kinesisCl.send(new CreateStreamCommand({ StreamName: KINESIS_STREAM, ShardCount: 1 }));
+  } catch (e) {
+    if (!e.name?.includes("ResourceInUse")) throw e;
+  }
+
+  // KMS key (always creates new — capture current run's key)
+  const keyRes = await kmsCl.send(new CreateKeyCommand({ Description: "ace-bench-test-key" }));
+  KEY_ID = keyRes.KeyMetadata.KeyId;
+
+  // Secrets Manager secret (ignore ResourceExistsException on re-runs)
+  try {
+    await secretsCl.send(new CreateSecretCommand({
+      Name: SECRET_NAME,
+      SecretString: JSON.stringify({ username: "admin", password: "s3cr3t" }),
+    }));
+  } catch (e) {
+    if (!e.name?.includes("ResourceExists")) throw e;
+  }
+
+  // SSM parameter (Overwrite:true is always safe)
+  await ssmCl.send(new PutParameterCommand({
+    Name: PARAM_NAME,
+    Value: "test-value-mcp",
+    Type: "String",
+    Overwrite: true,
+  }));
 });
 
 // Probe tools
@@ -158,4 +211,9 @@ test("ace_verify_fix: wrong key returns unauthorized", async () => {
 test("ace_score_run: empty key returns unauthorized", async () => {
   const result = await tool(scoreTools, "ace_score_run").handler({ run_id: "r1", harness_api_key: "" });
   assert.equal(result.error, "unauthorized");
+});
+
+test("probe_extended and observe_extended export arrays", () => {
+  assert.ok(Array.isArray(probeExtendedTools));
+  assert.ok(Array.isArray(observeExtendedTools));
 });
