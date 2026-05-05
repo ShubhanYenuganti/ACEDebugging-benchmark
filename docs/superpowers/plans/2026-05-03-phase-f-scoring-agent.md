@@ -19,8 +19,8 @@
 | Create | `harness/scoring/scorer.py` | F2 — orchestrator: load inputs, call dimensions, write score.json |
 | Create | `harness/scoring/dimensions/__init__.py` | package marker |
 | Create | `harness/scoring/dimensions/identification.py` | F3 — agent prompt + parse |
-| Create | `harness/scoring/dimensions/fix_correctness.py` | F4 — deterministic score + agent rationale |
-| Create | `harness/scoring/dimensions/regression.py` | F5 — deterministic penalty + agent rationale |
+| Create | `harness/scoring/dimensions/fix_correctness.py` | F4 — deterministic score |
+| Create | `harness/scoring/dimensions/regression.py` | F5 — deterministic penalty |
 | Create | `harness/scoring/dimensions/efficiency.py` | F6 — formula + agent rationale |
 | Create | `harness/scoring/dimensions/quality.py` | F7 — quality gate + agent score |
 | Create | `harness/scoring/gate.py` | F8 — thin re-export of check_gate |

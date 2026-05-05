@@ -135,101 +135,39 @@ def _make_verify(all_passed, primary_passed, failed_names, total_count, crit_reg
 
 
 def test_fix_correctness_scores_deterministic():
-    with patch("harness.scoring.dimensions.fix_correctness.call_scoring_agent") as mock_agent:
-        mock_agent.return_value = '{"rationale": "ok"}'
-        from harness.scoring.dimensions.fix_correctness import score
+    from harness.scoring.dimensions.fix_correctness import score
 
-        # 1.0 — all passed
-        r = score(_make_verify(True, True, [], 2), SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-        assert r["score"] == 1.0
-
-        # 0.6 — primary passed, secondaries failed
-        r = score(_make_verify(False, True, ["b"], 2), SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-        assert r["score"] == 0.6
-
-        # 0.3 — partial (some passed, primary failed)
-        r = score(_make_verify(False, False, ["a"], 2), SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-        assert r["score"] == 0.3
-
-        # 0.0 — nothing passed
-        r = score(_make_verify(False, False, ["a", "b"], 2), SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-        assert r["score"] == 0.0
+    assert score(_make_verify(True, True, [], 2))["score"] == 1.0
+    assert score(_make_verify(False, True, ["b"], 2))["score"] == 0.6
+    assert score(_make_verify(False, False, ["a"], 2))["score"] == 0.3
+    assert score(_make_verify(False, False, ["a", "b"], 2))["score"] == 0.0
 
 
-def test_fix_correctness_calls_agent_for_rationale():
-    with patch("harness.scoring.dimensions.fix_correctness.call_scoring_agent") as mock_agent:
-        mock_agent.return_value = '{"rationale": "all assertions passed cleanly"}'
-        from harness.scoring.dimensions.fix_correctness import score
-        r = score(_make_verify(True, True, [], 2), SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-
-    mock_agent.assert_called_once()
-    assert r["rationale"] == "all assertions passed cleanly"
-
-
-def manifest_resource_in_prompt(prompt, manifest):
-    return manifest["target_resource"] in prompt
-
-
-def test_fix_correctness_prompt_includes_context():
-    with patch("harness.scoring.dimensions.fix_correctness.call_scoring_agent") as mock_agent:
-        mock_agent.return_value = '{"rationale": "ok"}'
-        from harness.scoring.dimensions.fix_correctness import score
-        score(_make_verify(True, True, [], 2), SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-        prompt = mock_agent.call_args[0][1]
-
-    assert "known_good.yaml" in prompt.lower() or "ProcessorLambdaESM" in prompt
-    assert "traffic_flow" in prompt.lower() or "Hop 4" in prompt
-    assert manifest_resource_in_prompt(prompt, SAMPLE_MANIFEST)
+def test_fix_correctness_rationale_is_string():
+    from harness.scoring.dimensions.fix_correctness import score
+    r = score(_make_verify(True, True, [], 2))
+    assert isinstance(r["rationale"], str) and len(r["rationale"]) > 0
 
 
 def test_regression_penalties_deterministic():
-    with patch("harness.scoring.dimensions.regression.call_scoring_agent") as mock_agent:
-        mock_agent.return_value = '{"rationale": "ok"}'
-        from harness.scoring.dimensions.regression import compute
+    from harness.scoring.dimensions.regression import compute
 
-        cases = [
-            (_make_verify(True, True, [], 2, 0, 0), 0.00),
-            (_make_verify(True, True, [], 2, 0, 1), 0.08),
-            (_make_verify(True, True, [], 2, 1, 0), 0.18),
-            (_make_verify(True, True, [], 2, 1, 1), 0.28),
-            (_make_verify(True, True, [], 2, 2, 0), 0.28),
-        ]
-        for verify, expected_penalty in cases:
-            r = compute(verify, SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-            assert r["penalty"] == expected_penalty, f"expected {expected_penalty}, got {r['penalty']}"
+    cases = [
+        (_make_verify(True, True, [], 2, 0, 0), 0.00),
+        (_make_verify(True, True, [], 2, 0, 1), 0.08),
+        (_make_verify(True, True, [], 2, 1, 0), 0.18),
+        (_make_verify(True, True, [], 2, 1, 1), 0.28),
+        (_make_verify(True, True, [], 2, 2, 0), 0.28),
+    ]
+    for verify, expected_penalty in cases:
+        r = compute(verify)
+        assert r["penalty"] == expected_penalty, f"expected {expected_penalty}, got {r['penalty']}"
 
 
-def test_regression_calls_agent_for_rationale():
-    with patch("harness.scoring.dimensions.regression.call_scoring_agent") as mock_agent:
-        mock_agent.return_value = '{"rationale": "one critical regression on hop 4"}'
-        from harness.scoring.dimensions.regression import compute
-        r = compute(_make_verify(True, True, [], 2, 1, 0), SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-
-    mock_agent.assert_called_once()
-    assert r["rationale"] == "one critical regression on hop 4"
-
-
-def test_regression_no_agent_call_when_no_regressions():
-    """When penalty is 0.0, we still call agent but it returns a no-regression rationale."""
-    with patch("harness.scoring.dimensions.regression.call_scoring_agent") as mock_agent:
-        mock_agent.return_value = '{"rationale": "no regressions"}'
-        from harness.scoring.dimensions.regression import compute
-        r = compute(_make_verify(True, True, [], 2, 0, 0), SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-
-    mock_agent.assert_called_once()
-    assert r["penalty"] == 0.0
-    assert r["rationale"] == "no regressions"
-
-
-def test_regression_prompt_includes_context():
-    with patch("harness.scoring.dimensions.regression.call_scoring_agent") as mock_agent:
-        mock_agent.return_value = '{"rationale": "ok"}'
-        from harness.scoring.dimensions.regression import compute
-        compute(_make_verify(True, True, [], 2, 1, 0), SAMPLE_MANIFEST, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
-        prompt = mock_agent.call_args[0][1]
-
-    assert "known_good.yaml" in prompt.lower() or "ProcessorLambdaESM" in prompt
-    assert "traffic_flow" in prompt.lower() or "Hop 4" in prompt
+def test_regression_rationale_is_string():
+    from harness.scoring.dimensions.regression import compute
+    r = compute(_make_verify(True, True, [], 2, 1, 0))
+    assert isinstance(r["rationale"], str) and len(r["rationale"]) > 0
 
 
 SAMPLE_FILE_LOG = {
@@ -398,14 +336,10 @@ def _make_corpus_dir(base: pathlib.Path, arch_id: str, known_good: str, traffic_
 
 
 @patch("harness.scoring.dimensions.identification.call_scoring_agent")
-@patch("harness.scoring.dimensions.fix_correctness.call_scoring_agent")
-@patch("harness.scoring.dimensions.regression.call_scoring_agent")
 @patch("harness.scoring.dimensions.efficiency.call_scoring_agent")
 @patch("harness.scoring.dimensions.quality.call_scoring_agent")
-def test_scorer_writes_score_json(mock_q, mock_e, mock_r, mock_fc, mock_id, tmp_path):
+def test_scorer_writes_score_json(mock_q, mock_e, mock_id, tmp_path):
     mock_id.return_value = '{"score": 1.0, "rationale": "identified"}'
-    mock_fc.return_value = '{"rationale": "all passed"}'
-    mock_r.return_value = '{"rationale": "no regressions"}'
     mock_e.return_value = '{"rationale": "efficient"}'
     mock_q.return_value = '{"score": 1.0, "classification": "root_cause", "rationale": "clean"}'
 
@@ -435,11 +369,9 @@ def test_scorer_writes_score_json(mock_q, mock_e, mock_r, mock_fc, mock_id, tmp_
 
 
 @patch("harness.scoring.dimensions.identification.call_scoring_agent")
-@patch("harness.scoring.dimensions.fix_correctness.call_scoring_agent")
-@patch("harness.scoring.dimensions.regression.call_scoring_agent")
 @patch("harness.scoring.dimensions.efficiency.call_scoring_agent")
 @patch("harness.scoring.dimensions.quality.call_scoring_agent")
-def test_scorer_zero_on_did_not_deploy(mock_q, mock_e, mock_r, mock_fc, mock_id, tmp_path):
+def test_scorer_zero_on_did_not_deploy(mock_q, mock_e, mock_id, tmp_path):
     scenario_id = "arch_01_order_processing_fault_01"
     arch_id = "arch_01_order_processing"
     run_id = "test-run-002"

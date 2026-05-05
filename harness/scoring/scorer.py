@@ -79,8 +79,8 @@ def score_run(run_id: str, base_dir: str) -> dict:
         return _write_zero(run_dir, run_id, scenario_id, "quality_gate_failed", quality_gate_met=False)
 
     d1 = identification.score(tool_trace, manifest, verify_result, known_good, traffic_flow)
-    d2 = fix_correctness.score(verify_result, manifest, known_good, traffic_flow)
-    d3 = regression.compute(verify_result, manifest, known_good, traffic_flow)
+    d2 = fix_correctness.score(verify_result)
+    d3 = regression.compute(verify_result)
     d4 = efficiency.score(tool_trace, file_log, manifest, known_good, traffic_flow)
     d5 = quality.score(verify_result, manifest, file_log, known_good, traffic_flow)
 
