@@ -9,8 +9,11 @@ import threading
 import time
 import uuid
 
+import asyncio
+
 from dotenv import load_dotenv
 
+from harness.agent.loop import run_agent_loop
 from harness.shared.localstack_client import health_check
 from harness.shared.result_logger import log_verify_result
 from harness.runner.context_builder import build_context
@@ -148,6 +151,37 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ACE-Bench evaluation harness")
     parser.add_argument("scenario_dir", help="Path to scenario directory")
     parser.add_argument("--run-id", default=None, help="Run identifier (auto-generated if omitted)")
+    parser.add_argument(
+        "--model",
+        default=None,
+        metavar="PROVIDER/MODEL",
+        help=(
+            "LiteLLM model string to use as the evaluated agent "
+            "(e.g. anthropic/claude-sonnet-4-6, openai/gpt-4o, "
+            "gemini/gemini-1.5-pro, ollama/qwen2.5). "
+            "If omitted, the harness waits for an external agent to write the signal file."
+        ),
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        metavar="KEY",
+        help=(
+            "API key for the model provider. "
+            "Falls back to the provider-specific env var "
+            "(ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.). "
+            "Not required for local Ollama."
+        ),
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        metavar="URL",
+        help=(
+            "Custom API base URL (e.g. http://localhost:11434 for Ollama, "
+            "or a self-hosted OpenAI-compatible endpoint)."
+        ),
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -216,6 +250,26 @@ def main() -> None:
 
     # Step 7 — hand off to model
     _print_context(ctx)
+
+    if args.model:
+        _harness_key = os.environ.get("HARNESS_API_KEY", "")
+        _api_key = args.api_key
+        _base_url = args.base_url
+
+        def _run_agent():
+            asyncio.run(
+                run_agent_loop(
+                    model=args.model,
+                    api_key=_api_key,
+                    base_url=_base_url,
+                    context=ctx,
+                    scenario_dir=scenario_dir,
+                    run_id=run_id,
+                    harness_api_key=_harness_key,
+                )
+            )
+
+        threading.Thread(target=_run_agent, daemon=True, name="agent-runner").start()
 
     # Step 8 — block until submission complete or 30-minute timeout.
     # THREADING NOTE: runner.submitted is set True BEFORE handle_submission() completes
