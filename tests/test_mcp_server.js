@@ -464,3 +464,47 @@ test("ace_describe_dynamo_stream: nonexistent stream ARN returns error", async (
     .handler({ stream_arn: "arn:aws:dynamodb:us-east-1:000000000000:table/no-table/stream/2020-01-01T00:00:00.000" });
   assert.ok(result.error, JSON.stringify(result));
 });
+
+// === KMS ===
+test("ace_encrypt_decrypt: roundtrip returns matches:true", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_encrypt_decrypt")
+    .handler({ key_id: KEY_ID, plaintext: "ace-bench-test-plaintext" });
+  assert.ok("matches" in result, JSON.stringify(result));
+  assert.equal(result.matches, true);
+  assert.equal(result.decrypted, "ace-bench-test-plaintext");
+});
+
+test("ace_encrypt_decrypt: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_encrypt_decrypt").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_describe_kms_key: returns key state and usage", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_kms_key")
+    .handler({ key_id: KEY_ID });
+  assert.ok("state" in result, JSON.stringify(result));
+  assert.ok("key_usage" in result);
+  assert.ok("arn" in result);
+});
+
+// === Secrets Manager ===
+test("ace_get_secret: returns secret_string", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_get_secret")
+    .handler({ secret_id: SECRET_NAME });
+  assert.ok("secret_string" in result, JSON.stringify(result));
+  assert.ok("name" in result);
+});
+
+test("ace_get_secret: nonexistent secret returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_get_secret")
+    .handler({ secret_id: "no-such-secret-xyz" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_describe_secret: returns rotation_enabled and tags", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_secret")
+    .handler({ secret_id: SECRET_NAME });
+  assert.ok("rotation_enabled" in result, JSON.stringify(result));
+  assert.ok("name" in result);
+  assert.ok("arn" in result);
+});

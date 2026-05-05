@@ -13,6 +13,8 @@ import {
   DynamoDBStreamsClient,
   DescribeStreamCommand as DDBDescribeStreamCommand,
 } from "@aws-sdk/client-dynamodb-streams";
+import { KMSClient, DescribeKeyCommand, GetKeyRotationStatusCommand } from "@aws-sdk/client-kms";
+import { SecretsManagerClient, DescribeSecretCommand } from "@aws-sdk/client-secrets-manager";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -32,6 +34,8 @@ const r53ResolverClient = new Route53ResolverClient(awsConfig);
 const kinesisClient = new KinesisClient(awsConfig);
 const firehoseClient = new FirehoseClient(awsConfig);
 const dynamoStreamsClient = new DynamoDBStreamsClient(awsConfig);
+const kmsClient = new KMSClient(awsConfig);
+const secretsClient = new SecretsManagerClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -387,6 +391,65 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "DYNAMO_STREAMS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_describe_kms_key",
+    description: "Describe a KMS key including its state, usage, spec, and rotation status",
+    inputSchema: {
+      type: "object",
+      properties: { key_id: { type: "string" } },
+      required: ["key_id"],
+    },
+    async handler({ key_id } = {}) {
+      if (!key_id) return { error: "key_id is required" };
+      try {
+        const [keyRes, rotationRes] = await Promise.all([
+          kmsClient.send(new DescribeKeyCommand({ KeyId: key_id })),
+          kmsClient.send(new GetKeyRotationStatusCommand({ KeyId: key_id })).catch(() => null),
+        ]);
+        const k = keyRes.KeyMetadata;
+        return {
+          key_id: k?.KeyId,
+          arn: k?.Arn,
+          description: k?.Description ?? null,
+          state: k?.KeyState,
+          creation_date: k?.CreationDate?.toISOString() ?? null,
+          deletion_date: k?.DeletionDate?.toISOString() ?? null,
+          key_usage: k?.KeyUsage,
+          key_spec: k?.KeySpec,
+          rotation_enabled: rotationRes?.KeyRotationEnabled ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "KMS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_describe_secret",
+    description: "Get Secrets Manager secret metadata without retrieving the secret value",
+    inputSchema: {
+      type: "object",
+      properties: { secret_id: { type: "string" } },
+      required: ["secret_id"],
+    },
+    async handler({ secret_id } = {}) {
+      if (!secret_id) return { error: "secret_id is required" };
+      try {
+        const res = await secretsClient.send(new DescribeSecretCommand({ SecretId: secret_id }));
+        return {
+          name: res.Name,
+          arn: res.ARN,
+          description: res.Description ?? null,
+          rotation_enabled: res.RotationEnabled ?? false,
+          rotation_lambda_arn: res.RotationLambdaARN ?? null,
+          tags: (res.Tags ?? []).reduce((acc, t) => { acc[t.Key] = t.Value; return acc; }, {}),
+          created_date: res.CreatedDate?.toISOString() ?? null,
+          last_changed_date: res.LastChangedDate?.toISOString() ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SECRETS_ERROR" };
       }
     },
   },

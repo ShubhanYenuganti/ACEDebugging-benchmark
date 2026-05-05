@@ -15,6 +15,8 @@ import {
   GetRecordsCommand,
 } from "@aws-sdk/client-dynamodb-streams";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
+import { KMSClient, EncryptCommand, DecryptCommand } from "@aws-sdk/client-kms";
+import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -33,6 +35,8 @@ const r53ResolverClient = new Route53ResolverClient(awsConfig);
 const kinesisClient = new KinesisClient(awsConfig);
 const firehoseClient = new FirehoseClient(awsConfig);
 const dynamoStreamsClient = new DynamoDBStreamsClient(awsConfig);
+const kmsClient = new KMSClient(awsConfig);
+const secretsClient = new SecretsManagerClient(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -357,6 +361,64 @@ export const probeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "DYNAMO_STREAMS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_encrypt_decrypt",
+    description: "Encrypt then decrypt a test value using a KMS key to verify key usability",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key_id: { type: "string" },
+        plaintext: { type: "string" },
+      },
+      required: ["key_id", "plaintext"],
+    },
+    async handler({ key_id, plaintext } = {}) {
+      if (!key_id || !plaintext) return { error: "key_id and plaintext are required" };
+      try {
+        const encRes = await kmsClient.send(new EncryptCommand({
+          KeyId: key_id,
+          Plaintext: Buffer.from(plaintext),
+        }));
+        const decRes = await kmsClient.send(new DecryptCommand({
+          CiphertextBlob: encRes.CiphertextBlob,
+          KeyId: key_id,
+        }));
+        const decrypted = Buffer.from(decRes.Plaintext).toString("utf-8");
+        return { decrypted, matches: decrypted === plaintext, key_id: decRes.KeyId };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "KMS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_secret",
+    description: "Retrieve a secret value from Secrets Manager by name or ARN",
+    inputSchema: {
+      type: "object",
+      properties: {
+        secret_id: { type: "string" },
+        version_stage: { type: "string" },
+      },
+      required: ["secret_id"],
+    },
+    async handler({ secret_id, version_stage } = {}) {
+      if (!secret_id) return { error: "secret_id is required" };
+      try {
+        const params = { SecretId: secret_id };
+        if (version_stage) params.VersionStage = version_stage;
+        const res = await secretsClient.send(new GetSecretValueCommand(params));
+        return {
+          name: res.Name,
+          arn: res.ARN,
+          secret_string: res.SecretString ?? null,
+          created_date: res.CreatedDate?.toISOString() ?? null,
+          version_id: res.VersionId,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SECRETS_ERROR" };
       }
     },
   },
