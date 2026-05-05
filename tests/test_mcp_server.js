@@ -508,3 +508,50 @@ test("ace_describe_secret: returns rotation_enabled and tags", async () => {
   assert.ok("name" in result);
   assert.ok("arn" in result);
 });
+
+// === STS ===
+test("ace_get_caller_identity: returns account, user_id, arn", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_get_caller_identity").handler({});
+  assert.ok("account" in result, JSON.stringify(result));
+  assert.ok("user_id" in result);
+  assert.ok("arn" in result);
+});
+
+test("ace_assume_role: nonexistent role returns error or localstack mock credentials", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_assume_role")
+    .handler({
+      role_arn: "arn:aws:iam::000000000000:role/no-such-role",
+      session_name: "ace-test-session",
+    });
+  assert.ok(result.error || result.assumed_role_arn, JSON.stringify(result));
+});
+
+test("ace_assume_role: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_assume_role").handler({});
+  assert.ok(result.error);
+});
+
+// === SSM ===
+test("ace_get_parameter: returns name, type, value", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_get_parameter")
+    .handler({ name: PARAM_NAME });
+  assert.ok("name" in result, JSON.stringify(result));
+  assert.ok("value" in result);
+  assert.equal(result.value, "test-value-mcp");
+});
+
+test("ace_get_parameter: nonexistent parameter returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_get_parameter")
+    .handler({ name: "/no/such/param" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_describe_parameters: returns array of parameter metadata", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_parameters")
+    .handler({ path_prefix: "/test/mcp" });
+  assert.ok(Array.isArray(result), JSON.stringify(result));
+  if (result.length > 0) {
+    assert.ok("name" in result[0]);
+    assert.ok("type" in result[0]);
+  }
+});

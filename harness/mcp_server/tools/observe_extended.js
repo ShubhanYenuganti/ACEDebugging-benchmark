@@ -15,6 +15,7 @@ import {
 } from "@aws-sdk/client-dynamodb-streams";
 import { KMSClient, DescribeKeyCommand, GetKeyRotationStatusCommand } from "@aws-sdk/client-kms";
 import { SecretsManagerClient, DescribeSecretCommand } from "@aws-sdk/client-secrets-manager";
+import { SSMClient, DescribeParametersCommand } from "@aws-sdk/client-ssm";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -36,6 +37,7 @@ const firehoseClient = new FirehoseClient(awsConfig);
 const dynamoStreamsClient = new DynamoDBStreamsClient(awsConfig);
 const kmsClient = new KMSClient(awsConfig);
 const secretsClient = new SecretsManagerClient(awsConfig);
+const ssmClient = new SSMClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -450,6 +452,39 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SECRETS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_describe_parameters",
+    description: "List SSM Parameter Store parameters, optionally filtered by path prefix or type",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path_prefix: { type: "string" },
+        parameter_type: {
+          type: "string",
+          enum: ["String", "StringList", "SecureString"],
+        },
+      },
+    },
+    async handler({ path_prefix, parameter_type } = {}) {
+      try {
+        const filters = [];
+        if (path_prefix) filters.push({ Key: "Name", Option: "BeginsWith", Values: [path_prefix] });
+        if (parameter_type) filters.push({ Key: "Type", Option: "Equals", Values: [parameter_type] });
+        const params = filters.length ? { ParameterFilters: filters } : {};
+        const res = await ssmClient.send(new DescribeParametersCommand(params));
+        return (res.Parameters ?? []).map(p => ({
+          name: p.Name,
+          type: p.Type,
+          description: p.Description ?? null,
+          version: p.Version,
+          last_modified: p.LastModifiedDate?.toISOString() ?? null,
+          tier: p.Tier ?? null,
+        }));
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SSM_ERROR" };
       }
     },
   },

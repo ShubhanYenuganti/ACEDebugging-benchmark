@@ -17,6 +17,8 @@ import {
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { KMSClient, EncryptCommand, DecryptCommand } from "@aws-sdk/client-kms";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import { STSClient, GetCallerIdentityCommand, AssumeRoleCommand } from "@aws-sdk/client-sts";
+import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -37,6 +39,8 @@ const firehoseClient = new FirehoseClient(awsConfig);
 const dynamoStreamsClient = new DynamoDBStreamsClient(awsConfig);
 const kmsClient = new KMSClient(awsConfig);
 const secretsClient = new SecretsManagerClient(awsConfig);
+const stsClient = new STSClient(awsConfig);
+const ssmClient = new SSMClient(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -419,6 +423,77 @@ export const probeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SECRETS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_caller_identity",
+    description: "Return the AWS account ID, user ID, and ARN for the current caller",
+    inputSchema: { type: "object", properties: {} },
+    async handler() {
+      try {
+        const res = await stsClient.send(new GetCallerIdentityCommand({}));
+        return { account: res.Account, user_id: res.UserId, arn: res.Arn };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "STS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_assume_role",
+    description: "Assume an IAM role via STS and return credential metadata (secret key not returned)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        role_arn: { type: "string" },
+        session_name: { type: "string" },
+      },
+      required: ["role_arn", "session_name"],
+    },
+    async handler({ role_arn, session_name } = {}) {
+      if (!role_arn || !session_name) return { error: "role_arn and session_name are required" };
+      try {
+        const res = await stsClient.send(new AssumeRoleCommand({
+          RoleArn: role_arn,
+          RoleSessionName: session_name,
+        }));
+        return {
+          access_key_id: res.Credentials?.AccessKeyId,
+          expiration: res.Credentials?.Expiration?.toISOString() ?? null,
+          assumed_role_arn: res.AssumedRoleUser?.Arn,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "STS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_parameter",
+    description: "Retrieve an SSM Parameter Store parameter value by name",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        with_decryption: { type: "boolean" },
+      },
+      required: ["name"],
+    },
+    async handler({ name, with_decryption = false } = {}) {
+      if (!name) return { error: "name is required" };
+      try {
+        const res = await ssmClient.send(new GetParameterCommand({
+          Name: name,
+          WithDecryption: with_decryption,
+        }));
+        return {
+          name: res.Parameter?.Name,
+          type: res.Parameter?.Type,
+          value: res.Parameter?.Value,
+          version: res.Parameter?.Version,
+          last_modified: res.Parameter?.LastModifiedDate?.toISOString() ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SSM_ERROR" };
       }
     },
   },
