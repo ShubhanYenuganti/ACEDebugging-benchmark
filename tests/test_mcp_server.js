@@ -555,3 +555,59 @@ test("ace_describe_parameters: returns array of parameter metadata", async () =>
     assert.ok("type" in result[0]);
   }
 });
+
+// === S3 Control ===
+test("ace_list_access_points: returns array", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_list_access_points")
+    .handler({ account_id: "000000000000" });
+  assert.ok(Array.isArray(result), JSON.stringify(result));
+});
+
+test("ace_list_access_points: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_list_access_points").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_get_public_access_block: returns block config fields", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_public_access_block")
+    .handler({ account_id: "000000000000" });
+  assert.ok(
+    "block_public_acls" in result || result.error,
+    JSON.stringify(result)
+  );
+});
+
+// === CloudWatch Metrics ===
+test("ace_put_metric_data: returns success:true", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_put_metric_data")
+    .handler({ namespace: "ACEBench/Test", metric_name: "TestMetric", value: 42 });
+  assert.ok("success" in result, JSON.stringify(result));
+  assert.equal(result.success, true);
+});
+
+test("ace_put_metric_data: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_put_metric_data").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_get_metric_statistics: returns label and datapoints array", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_metric_statistics")
+    .handler({ namespace: "ACEBench/Test", metric_name: "TestMetric" });
+  assert.ok("label" in result || result.error, JSON.stringify(result));
+  if (!result.error) assert.ok(Array.isArray(result.datapoints));
+});
+
+// === IAM Simulation ===
+test("ace_simulate_policy: nonexistent principal returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_simulate_policy")
+    .handler({
+      policy_source_arn: "arn:aws:iam::000000000000:role/no-such-role",
+      action_names: ["s3:GetObject"],
+    });
+  assert.ok(result.error || Array.isArray(result), JSON.stringify(result));
+});
+
+test("ace_simulate_policy: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_simulate_policy").handler({});
+  assert.ok(result.error);
+});

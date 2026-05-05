@@ -19,6 +19,9 @@ import { KMSClient, EncryptCommand, DecryptCommand } from "@aws-sdk/client-kms";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { STSClient, GetCallerIdentityCommand, AssumeRoleCommand } from "@aws-sdk/client-sts";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
+import { S3ControlClient, ListAccessPointsCommand } from "@aws-sdk/client-s3-control";
+import { CloudWatchClient, PutMetricDataCommand } from "@aws-sdk/client-cloudwatch";
+import { IAMClient, SimulatePrincipalPolicyCommand } from "@aws-sdk/client-iam";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -41,6 +44,9 @@ const kmsClient = new KMSClient(awsConfig);
 const secretsClient = new SecretsManagerClient(awsConfig);
 const stsClient = new STSClient(awsConfig);
 const ssmClient = new SSMClient(awsConfig);
+const s3ControlClient = new S3ControlClient(awsConfig);
+const cwClient = new CloudWatchClient(awsConfig);
+const iamClient = new IAMClient(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -494,6 +500,98 @@ export const probeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SSM_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_list_access_points",
+    description: "List S3 Access Points for an account, optionally filtered by bucket",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_id: { type: "string" },
+        bucket: { type: "string" },
+      },
+      required: ["account_id"],
+    },
+    async handler({ account_id, bucket } = {}) {
+      if (!account_id) return { error: "account_id is required" };
+      try {
+        const params = { AccountId: account_id };
+        if (bucket) params.Bucket = bucket;
+        const res = await s3ControlClient.send(new ListAccessPointsCommand(params));
+        return (res.AccessPointList ?? []).map(ap => ({
+          name: ap.Name,
+          arn: ap.AccessPointArn,
+          bucket: ap.Bucket,
+          network_origin: ap.NetworkOrigin,
+        }));
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "S3CONTROL_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_put_metric_data",
+    description: "Put a test metric data point to CloudWatch Metrics",
+    inputSchema: {
+      type: "object",
+      properties: {
+        namespace: { type: "string" },
+        metric_name: { type: "string" },
+        value: { type: "number" },
+        unit: { type: "string" },
+      },
+      required: ["namespace", "metric_name", "value"],
+    },
+    async handler({ namespace, metric_name, value, unit = "None" } = {}) {
+      if (!namespace || !metric_name || value === undefined)
+        return { error: "namespace, metric_name, and value are required" };
+      try {
+        await cwClient.send(new PutMetricDataCommand({
+          Namespace: namespace,
+          MetricData: [{
+            MetricName: metric_name,
+            Value: value,
+            Unit: unit,
+            Timestamp: new Date(),
+          }],
+        }));
+        return { success: true, namespace, metric_name, value, unit };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "CW_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_simulate_policy",
+    description: "Simulate IAM policy to check whether actions are allowed for a principal ARN",
+    inputSchema: {
+      type: "object",
+      properties: {
+        policy_source_arn: { type: "string" },
+        action_names: { type: "array", items: { type: "string" } },
+        resource_arns: { type: "array", items: { type: "string" } },
+      },
+      required: ["policy_source_arn", "action_names"],
+    },
+    async handler({ policy_source_arn, action_names, resource_arns = ["*"] } = {}) {
+      if (!policy_source_arn || !action_names?.length)
+        return { error: "policy_source_arn and action_names are required" };
+      try {
+        const res = await iamClient.send(new SimulatePrincipalPolicyCommand({
+          PolicySourceArn: policy_source_arn,
+          ActionNames: action_names,
+          ResourceArns: resource_arns,
+        }));
+        return (res.EvaluationResults ?? []).map(r => ({
+          action: r.EvalActionName,
+          resource: r.EvalResourceName,
+          decision: r.EvalDecision,
+          matched_statements: (r.MatchedStatements ?? []).map(s => s.SourcePolicyId),
+        }));
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "IAM_ERROR" };
       }
     },
   },

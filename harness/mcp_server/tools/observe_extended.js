@@ -16,6 +16,8 @@ import {
 import { KMSClient, DescribeKeyCommand, GetKeyRotationStatusCommand } from "@aws-sdk/client-kms";
 import { SecretsManagerClient, DescribeSecretCommand } from "@aws-sdk/client-secrets-manager";
 import { SSMClient, DescribeParametersCommand } from "@aws-sdk/client-ssm";
+import { S3ControlClient, GetPublicAccessBlockCommand } from "@aws-sdk/client-s3-control";
+import { CloudWatchClient, GetMetricStatisticsCommand } from "@aws-sdk/client-cloudwatch";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -38,6 +40,8 @@ const dynamoStreamsClient = new DynamoDBStreamsClient(awsConfig);
 const kmsClient = new KMSClient(awsConfig);
 const secretsClient = new SecretsManagerClient(awsConfig);
 const ssmClient = new SSMClient(awsConfig);
+const s3ControlClient = new S3ControlClient(awsConfig);
+const cwClient = new CloudWatchClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -485,6 +489,79 @@ export const observeExtendedTools = [
         }));
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SSM_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_public_access_block",
+    description: "Get account-level S3 public access block configuration",
+    inputSchema: {
+      type: "object",
+      properties: { account_id: { type: "string" } },
+      required: ["account_id"],
+    },
+    async handler({ account_id } = {}) {
+      if (!account_id) return { error: "account_id is required" };
+      try {
+        const res = await s3ControlClient.send(new GetPublicAccessBlockCommand({ AccountId: account_id }));
+        const c = res.PublicAccessBlockConfiguration ?? {};
+        return {
+          block_public_acls: c.BlockPublicAcls ?? false,
+          ignore_public_acls: c.IgnorePublicAcls ?? false,
+          block_public_policy: c.BlockPublicPolicy ?? false,
+          restrict_public_buckets: c.RestrictPublicBuckets ?? false,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "S3CONTROL_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_metric_statistics",
+    description: "Get CloudWatch metric statistics for a namespace/metric over a time window",
+    inputSchema: {
+      type: "object",
+      properties: {
+        namespace: { type: "string" },
+        metric_name: { type: "string" },
+        period: { type: "number" },
+        statistics: {
+          type: "array",
+          items: { type: "string", enum: ["Average", "Sum", "Maximum", "Minimum", "SampleCount"] },
+        },
+        start_time: { type: "string" },
+        end_time: { type: "string" },
+      },
+      required: ["namespace", "metric_name"],
+    },
+    async handler({ namespace, metric_name, period = 60, statistics = ["Average"], start_time, end_time } = {}) {
+      if (!namespace || !metric_name) return { error: "namespace and metric_name are required" };
+      const now = new Date();
+      const startDate = start_time ? new Date(start_time) : new Date(now.getTime() - 60 * 60 * 1000);
+      const endDate = end_time ? new Date(end_time) : now;
+      try {
+        const res = await cwClient.send(new GetMetricStatisticsCommand({
+          Namespace: namespace,
+          MetricName: metric_name,
+          Period: period,
+          Statistics: statistics,
+          StartTime: startDate,
+          EndTime: endDate,
+        }));
+        return {
+          label: res.Label,
+          datapoints: (res.Datapoints ?? []).map(d => ({
+            timestamp: d.Timestamp?.toISOString(),
+            average: d.Average ?? null,
+            sum: d.Sum ?? null,
+            maximum: d.Maximum ?? null,
+            minimum: d.Minimum ?? null,
+            sample_count: d.SampleCount ?? null,
+            unit: d.Unit,
+          })),
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "CW_ERROR" };
       }
     },
   },
