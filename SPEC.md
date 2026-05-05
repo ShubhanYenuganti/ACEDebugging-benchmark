@@ -74,13 +74,29 @@ ace-bench/
 │   │   ├── pass2_regression.py
 │   │   ├── pass3_classification.py
 │   │   └── pass4_concurrency.py
+│   ├── scoring/                 # Phase F
+│   │   ├── agent.py
+│   │   ├── scorer.py
+│   │   ├── gate.py
+│   │   └── dimensions/
+│   │       ├── identification.py
+│   │       ├── fix_correctness.py
+│   │       ├── regression.py
+│   │       ├── efficiency.py
+│   │       └── quality.py
+│   ├── agent/                   # Phase G — inline agent runner
+│   │   ├── __init__.py
+│   │   ├── tools.py
+│   │   └── loop.py
 │   └── run.py                   # Phase E — top-level entry point
 └── results/
     └── [run_id]/
         ├── scenario_id.txt
         ├── tool_call_trace.json
         ├── file_change_log.json
-        └── verify_result.json
+        ├── faulted_baseline.json
+        ├── verify_result.json
+        └── score.json
 ```
 
 ---
@@ -93,7 +109,8 @@ ace-bench/
 ## What this is
 Evaluation harness for the ACE-Bench debugging benchmark. Takes a
 completed scenario corpus and runs a model through diagnosis, file
-editing, redeployment, and verification.
+editing, redeployment, and verification. Supports any LLM provider
+via LiteLLM (Anthropic, OpenAI, Gemini, Ollama, etc.).
 
 ## Runtime
 - Python 3.11 — all harness code
@@ -103,12 +120,22 @@ editing, redeployment, and verification.
 - Fake account ID for IAM ARNs: 000000000000
 - LocalStack must be running before any phase is executed
 
+## Python dependencies
+- boto3, requests, python-dotenv, cfn-lint, pytest, pytest-mock
+- litellm — universal LLM adapter (Anthropic, OpenAI, Gemini, Ollama, etc.)
+- mcp — MCP client for spawning the diagnostic server from Python
+- anthropic — used by the scoring agent only
+
 ## Imports
 All Python modules import shared utilities from harness/shared/:
   from harness.shared.localstack_client import cf_client, lambda_client, s3_client, sqs_client, iam_client, logs_client
   from harness.shared.cfn_lint_runner import run_lint
   from harness.shared.file_differ import diff_directories
   from harness.shared.result_logger import log_result, log_tool_call, log_file_change
+
+Agent modules:
+  from harness.agent.tools import mcp_to_openai_tool, filter_model_tools, dispatch_file_tool, FILE_TOOL_DEFINITIONS
+  from harness.agent.loop import run_agent_loop
 
 ## Key invariants — never violate
 - The model's first UPDATE_COMPLETE is final. Never allow a second deploy.
@@ -118,16 +145,23 @@ All Python modules import shared utilities from harness/shared/:
 - Tool calls are logged individually with input, output, and timestamp.
 - Score tools in the MCP server require HARNESS_API_KEY in the request.
   The key is set as an environment variable and never passed to the model.
+- The inline agent (--model) spawns the MCP server internally; no external
+  registration is needed. The agent's write_file tool is restricted to
+  deployment/ and faulted.yaml. read_file blocks fault_manifest.json and
+  known_good.yaml. submit_fix writes the signal file for the polling loop.
 
 ## Dependency order
 Phase A (shared utilities) → Phase B (MCP server) → Phase C (runner
 + deployment handler) → Phase D (verify loop) → Phase E (entry point)
+→ Phase F (scoring) → Phase G (inline agent runner)
 
 ## Result files written per run
 results/[run_id]/scenario_id.txt       — which scenario was run
 results/[run_id]/tool_call_trace.json  — every MCP diagnostic call
 results/[run_id]/file_change_log.json  — every file edit with line counts
-results/[run_id]/verify_result.json    — output of Steps 5 and 6
+results/[run_id]/faulted_baseline.json — assertion results on faulted deploy
+results/[run_id]/verify_result.json    — output of all verification passes
+results/[run_id]/score.json            — final score with per-dimension breakdown
 ```
 
 ---
@@ -869,6 +903,7 @@ complete evaluation loop from context delivery through verify result.
 
 ```
 Usage: python harness/run.py <scenario_dir> [--run-id <id>]
+       [--model PROVIDER/MODEL] [--api-key KEY] [--base-url URL]
 ```
 
 If `--run-id` is not provided, generate one: `uuid4()[:8]`.
@@ -1228,6 +1263,83 @@ Write `tests/test_scoring.py`:
 
 ---
 
+## Phase G — Inline Agent Runner
+
+**Depends on:** Phase A (shared utilities), Phase B (MCP server), Phase E (entry point), Phase F (scoring)
+**Blocks:** nothing
+**Session scope:** complete in one session
+
+### Goal
+
+Enable the harness to drive any LLM through a scenario end-to-end without requiring
+Claude Code or an external model script. The `--model`, `--api-key`, and `--base-url`
+flags on `run.py` activate an inline agent that spawns the MCP server as a subprocess,
+discovers tools at runtime, and runs the model through the scenario using LiteLLM as
+the universal LLM adapter.
+
+### Architecture
+
+A new `harness/agent/` package contains all agent logic. LiteLLM normalizes every
+provider's API to the OpenAI format and converts OpenAI-format tool definitions into
+each provider's native format. Tools are defined once in OpenAI function-calling format:
+the MCP probe/observe tools (converted from MCP schema at runtime), Python-native file
+tools (`read_file`, `write_file`, `list_directory` scoped to `deployment/` and
+`faulted.yaml`), and a `submit_fix` tool that writes the redeployment signal file.
+
+### G1 — `harness/agent/tools.py`
+
+Owns all tool definitions and dispatch:
+
+- `mcp_to_openai_tool(mcp_tool) -> dict` — converts MCP tool object to OpenAI format
+- `filter_model_tools(tools) -> list[dict]` — removes `ace_verify_fix` and `ace_score_run`
+- `FILE_TOOL_DEFINITIONS` — OpenAI-format defs for `read_file`, `write_file`, `list_directory`, `submit_fix`
+- `dispatch_file_tool(name, inputs, scenario_dir) -> str` — synchronous dispatcher with:
+  - Path traversal prevention via `resolve()` + `relative_to()`
+  - `fault_manifest.json` and `known_good.yaml` read-blocked
+  - `write_file` restricted to `deployment/` prefix and exact `faulted.yaml`
+  - `submit_fix` writes `{"trigger": "update-stack"}` to the signal file
+
+### G2 — `harness/agent/loop.py`
+
+Async LiteLLM agent loop:
+
+- `_start_mcp_session(harness_api_key)` — spawns Node.js MCP server via `mcp.client.stdio`
+- `_build_system(context)` — constructs system prompt with template path, deployment dir, stack outputs
+- `run_agent_loop(model, api_key, base_url, context, scenario_dir, run_id, harness_api_key, max_turns=50) -> bool`:
+  - Discovers MCP tools, filters score tools, appends file tool definitions
+  - Loops calling `litellm.completion()` up to `max_turns`
+  - Dispatches file tools locally, MCP tools via session
+  - Logs MCP tool calls (not file tools) via `result_logger.log_tool_call`
+  - Exits on `stop`/`end_turn` finish reason, `submit_fix` call, or `max_turns`
+  - Returns `True` if `submit_fix` was called
+
+### G3 — `harness/run.py` modifications
+
+Three new CLI arguments: `--model`, `--api-key`, `--base-url`. When `--model` is
+provided, the harness validates `HARNESS_API_KEY` is set, then starts `run_agent_loop`
+in a daemon thread after printing context. The agent writes the signal file via
+`submit_fix`, the existing polling loop detects it, and the deployment/verify/scoring
+pipeline proceeds unchanged. Agent thread crashes are caught and fail fast with a
+clear error instead of silently timing out.
+
+### G — Verification
+
+Tests in `tests/test_agent_loop.py` (20 tests):
+
+- MCP→OpenAI tool conversion shape
+- Score tool filtering (`ace_verify_fix`, `ace_score_run` blocked)
+- `read_file`: content return, `fault_manifest.json` blocked, `known_good.yaml` blocked, path traversal blocked
+- `write_file`: `deployment/` allowed, `faulted.yaml` allowed, outside blocked, path traversal blocked
+- `list_directory`: correct entries
+- `submit_fix`: signal file written with correct JSON content
+- Unknown tool dispatch returns error
+- `FILE_TOOL_DEFINITIONS` OpenAI format validation
+- Loop exits on `stop`, `end_turn`, `submit_fix`
+- Loop respects `max_turns`
+- MCP tool calls logged, file tool calls not logged
+
+---
+
 ## Dependency Summary
 
 ```
@@ -1250,6 +1362,10 @@ Phase A (shared utilities)
          [E verified]
               │
          Phase F (scoring agent)
+              │
+         [F verified]
+              │
+         Phase G (inline agent runner)
 ```
 
 No phase should begin until all phases it depends on have passed

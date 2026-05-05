@@ -1,16 +1,15 @@
 # Running the ACE-Bench Harness End-to-End
 
-This document walks through a complete evaluation run: starting LocalStack, wiring in an LLM model, running the agent against a scenario, letting the verify loop execute, and viewing scoring output.
+This document walks through a complete evaluation run: starting LocalStack, running a model against a scenario, and viewing scoring output.
 
 ---
 
 ## Prerequisites
 
-- Python 3.11 with the project venv active (`.venv/bin/activate`)
+- Python 3.11 with the project installed (`pip install -e .`)
 - Node.js v22+ (for the MCP diagnostic server)
 - LocalStack CLI installed (`pip install localstack` or via Homebrew)
 - `ANTHROPIC_API_KEY` set in environment (required by the scoring agent)
-- MCP server registered (one-time setup; see below)
 
 ---
 
@@ -25,70 +24,157 @@ The harness communicates with LocalStack at `http://localhost:4566` using fake c
 
 ---
 
-## Step 2 — Register the MCP Diagnostic Server (one-time)
+## Step 2 — Generate a HARNESS_API_KEY
 
-The benchmarked model receives diagnostic tools via MCP. Register the server with Claude Code once:
+The harness uses an API key to gate internal score tools (the evaluated model never sees this key). Generate one and save it to `.env`:
 
 ```bash
-claude mcp add ace-bench-diagnostic-mcp \
-  -e HARNESS_API_KEY=$(openssl rand -hex 32) \
-  -e LOCALSTACK_ENDPOINT=http://localhost:4566 \
-  -- node harness/mcp_server/index.js
+echo "HARNESS_API_KEY=$(openssl rand -hex 32)" >> .env
 ```
 
-Copy the generated `HARNESS_API_KEY` value into a `.env` file at the project root:
-
-```
-HARNESS_API_KEY=<value printed above>
-```
-
-The harness reads this key at startup. The key is never passed to the model — it gates internal score tools only.
+The harness loads `.env` at startup via `python-dotenv`. Never commit `.env`.
 
 ---
 
-## Step 3 — Add an LLM Model to Evaluate
+## Step 3 — Choose an Evaluation Mode
 
-Pass `--model` (a LiteLLM provider/model string) and, where required, `--api-key` to
-`run.py`. The harness runs the model in-process with full access to the registered MCP
-diagnostic tools and the scenario's `deployment/` directory.
+The harness supports two modes for running models: **inline** (recommended) and **external**.
 
-### Supported providers (examples)
+### Mode A — Inline Agent (`--model` flag) — Recommended
 
-| Provider | `--model` | Auth |
-|----------|-----------|------|
-| Anthropic | `anthropic/claude-sonnet-4-6` | `--api-key` or `ANTHROPIC_API_KEY` |
-| OpenAI | `openai/gpt-4o` | `--api-key` or `OPENAI_API_KEY` |
-| Google Gemini | `gemini/gemini-1.5-pro` | `--api-key` or `GEMINI_API_KEY` |
-| Ollama (local) | `ollama/qwen2.5` | none — use `--base-url http://localhost:11434` |
-| Ollama (local) | `ollama/glm4` | none — use `--base-url http://localhost:11434` |
-| Any OpenAI-compatible | `openai/your-model` | `--api-key` + `--base-url` |
+The harness drives any LLM directly using [LiteLLM](https://docs.litellm.ai/) as a universal adapter. The MCP diagnostic server is spawned automatically as a subprocess — no manual registration required.
 
-### Example invocations
+```
+python harness/run.py <scenario_dir> --model <provider/model> [--api-key <key>] [--base-url <url>]
+```
+
+#### Supported providers
+
+| Provider | `--model` value | Authentication |
+|----------|----------------|----------------|
+| Anthropic | `anthropic/claude-sonnet-4-6` | `--api-key` or `ANTHROPIC_API_KEY` env var |
+| Anthropic | `anthropic/claude-haiku-4` | `--api-key` or `ANTHROPIC_API_KEY` env var |
+| OpenAI | `openai/gpt-4o` | `--api-key` or `OPENAI_API_KEY` env var |
+| OpenAI | `openai/gpt-4.1-mini` | `--api-key` or `OPENAI_API_KEY` env var |
+| Google Gemini | `gemini/gemini-2.5-pro` | `--api-key` or `GEMINI_API_KEY` env var |
+| Google Gemini | `gemini/gemini-2.5-flash` | `--api-key` or `GEMINI_API_KEY` env var |
+| Ollama (local) | `ollama/qwen2.5` | none — requires `--base-url` |
+| Ollama (local) | `ollama/glm4` | none — requires `--base-url` |
+| Ollama (local) | `ollama/llama3.1` | none — requires `--base-url` |
+| Any OpenAI-compatible | `openai/<model-name>` | `--api-key` + `--base-url` |
+
+The `--model` value uses LiteLLM's `provider/model` format. LiteLLM automatically converts OpenAI-format tool definitions to each provider's native format, so the same tool definitions work across all providers.
+
+#### API key resolution
+
+The `--api-key` flag takes priority. If omitted, LiteLLM falls back to the standard environment variable for each provider:
+
+| Provider | Env var fallback |
+|----------|-----------------|
+| Anthropic | `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Gemini | `GEMINI_API_KEY` |
+| Ollama | none needed |
+
+For Ollama and other self-hosted models, no API key is required — just set `--base-url`.
+
+#### The `--base-url` flag
+
+Use `--base-url` when the model is served at a custom endpoint:
+
+- **Ollama**: `--base-url http://localhost:11434`
+- **vLLM**: `--base-url http://localhost:8000/v1`
+- **Any OpenAI-compatible API**: `--base-url https://your-server.example.com/v1`
+
+#### Example invocations
 
 ```bash
-# Anthropic
+# Anthropic Claude
 python harness/run.py scenarios/arch01_fault01_security/ \
   --model anthropic/claude-sonnet-4-6 \
   --api-key sk-ant-...
 
-# OpenAI
+# OpenAI GPT-4o
 python harness/run.py scenarios/arch01_fault01_security/ \
   --model openai/gpt-4o \
   --api-key sk-...
 
-# Gemini
+# Google Gemini
 python harness/run.py scenarios/arch01_fault01_security/ \
-  --model gemini/gemini-1.5-pro \
+  --model gemini/gemini-2.5-pro \
   --api-key AIza...
 
-# Ollama (Qwen, GLM, Gemma — no key needed)
+# Ollama (local, no API key needed)
 python harness/run.py scenarios/arch01_fault01_security/ \
   --model ollama/qwen2.5 \
   --base-url http://localhost:11434
+
+# Using env vars instead of --api-key
+export ANTHROPIC_API_KEY=sk-ant-...
+python harness/run.py scenarios/arch01_fault01_security/ \
+  --model anthropic/claude-sonnet-4-6
 ```
 
-Without `--model`, the harness prints context to stdout and waits up to 30 minutes for
-an external agent to write `/tmp/ace-bench-update.json`.
+#### How the inline agent works
+
+When `--model` is provided:
+
+1. The harness deploys the faulted scenario and prints context as usual.
+2. A daemon thread starts `run_agent_loop`, which:
+   - Spawns the Node.js MCP server as a stdio subprocess (no manual registration needed).
+   - Discovers all MCP diagnostic tools at runtime.
+   - Filters out score tools (`ace_verify_fix`, `ace_score_run`) so the model cannot call them.
+   - Adds Python-native file tools (`read_file`, `write_file`, `list_directory`, `submit_fix`).
+   - Loops calling the LLM up to 50 turns (default), dispatching tool calls each turn.
+3. When the model calls `submit_fix`, the agent writes the signal file (`/tmp/ace-bench-update.json`).
+4. The main thread's polling loop detects the signal file and proceeds with deployment, verification, and scoring — exactly as in external mode.
+
+File tool restrictions enforced by the agent:
+- `read_file`: reads any file in the scenario directory **except** `fault_manifest.json` and `known_good.yaml`. Path traversal is blocked.
+- `write_file`: only allows writes to `deployment/` and `faulted.yaml`. All other paths are rejected.
+- `submit_fix`: writes the redeployment signal. First call is final — there is no second chance.
+
+If the agent thread crashes (auth error, network failure, etc.), the harness exits immediately with a clear error message instead of silently timing out.
+
+### Mode B — External Agent (legacy)
+
+Without `--model`, the harness prints the scenario context to stdout and waits up to 30 minutes for an external agent to write the signal file. This mode is useful for:
+
+- Interactive evaluation with Claude Code
+- Custom model scripts or agent frameworks
+- Debugging scenarios manually
+
+#### Using Claude Code as the external agent
+
+1. Register the MCP server with Claude Code (one-time):
+
+```bash
+claude mcp add ace-bench-diagnostic-mcp \
+  -e HARNESS_API_KEY=$(grep HARNESS_API_KEY .env | cut -d= -f2) \
+  -e LOCALSTACK_ENDPOINT=http://localhost:4566 \
+  -- node harness/mcp_server/index.js
+```
+
+2. Run the harness without `--model`:
+
+```bash
+python harness/run.py scenarios/arch01_fault01_security/
+```
+
+3. When the harness prints the `SCENARIO BRIEF` block and pauses, switch to a Claude Code session and paste the printed context. Claude Code uses the registered MCP tools to diagnose and fix the scenario. When done, it calls `localstack-deployer update-stack`.
+
+#### Writing a custom agent script
+
+Any script that writes the signal file triggers redeployment:
+
+```python
+import json, pathlib
+pathlib.Path("/tmp/ace-bench-update.json").write_text(
+    json.dumps({"trigger": "update-stack"})
+)
+```
+
+The harness polls for this file every second. The script must also make any file edits to `deployment/` and/or `faulted.yaml` before writing the signal file.
 
 ---
 
@@ -119,20 +205,36 @@ The `fault_manifest.json` inside each scenario directory encodes what was inject
 
 ## Step 5 — Run the Harness
 
+### Full command syntax
+
 ```bash
-python harness/run.py scenarios/arch01_fault01_security/ [--run-id <id>]
+python harness/run.py <scenario_dir> \
+  [--run-id <id>] \
+  [--model PROVIDER/MODEL] \
+  [--api-key KEY] \
+  [--base-url URL]
 ```
 
-If `--run-id` is omitted, an 8-character hex ID is generated automatically.
+| Flag | Required | Description |
+|------|----------|-------------|
+| `scenario_dir` | yes | Path to scenario directory |
+| `--run-id` | no | Run identifier (auto-generated 8-char hex if omitted) |
+| `--model` | no | LiteLLM model string; enables inline agent mode |
+| `--api-key` | no | API key for the model provider; falls back to env var |
+| `--base-url` | no | Custom API endpoint (Ollama, vLLM, self-hosted) |
 
-**What happens internally:**
+### What happens internally
 
 1. Loads `.env` and checks LocalStack is reachable.
 2. Validates the scenario directory (requires `scenario.md`, `faulted.yaml`, `fault_manifest.json`, `deployment/`).
 3. Deploys `faulted.yaml` to LocalStack and records a baseline assertion result (`faulted_baseline.json`).
 4. Builds and prints the model context (scenario brief, template path, deployment dir, stack outputs, instructions).
-5. Blocks for up to 30 minutes waiting for the model to trigger redeployment.
-6. On redeployment: runs cfn-lint, packages any modified Lambda handlers, calls CloudFormation `update-stack`, waits for `UPDATE_COMPLETE`.
+5. If `--model` is set: starts the inline agent in a daemon thread.
+6. Blocks for up to 30 minutes waiting for the signal file (written by inline agent or external agent).
+7. On redeployment: runs cfn-lint, packages any modified Lambda handlers, calls CloudFormation `update-stack`, waits for `UPDATE_COMPLETE`.
+8. Runs the four-pass verify loop.
+9. Runs the scoring agent (Claude Sonnet).
+10. Prints the summary and exits.
 
 ---
 
@@ -233,12 +335,34 @@ results/<run_id>/
 ## Running Multiple Scenarios
 
 ```bash
+# Run all scenarios with GPT-4o
 for scenario in scenarios/arch01_fault*/; do
-    python harness/run.py "$scenario"
+    python harness/run.py "$scenario" \
+      --model openai/gpt-4o \
+      --api-key "$OPENAI_API_KEY"
+done
+
+# Run all scenarios with local Ollama
+for scenario in scenarios/arch01_fault*/; do
+    python harness/run.py "$scenario" \
+      --model ollama/qwen2.5 \
+      --base-url http://localhost:11434
 done
 ```
 
 Each run gets a unique auto-generated `run_id`, so results do not collide.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `ERROR: HARNESS_API_KEY env var is required when --model is used` | Missing `.env` file or key | Run `echo "HARNESS_API_KEY=$(openssl rand -hex 32)" >> .env` |
+| `ERROR: Agent crashed: AuthenticationError` | Invalid or missing API key | Check `--api-key` or the provider's env var |
+| `ERROR: Agent crashed: Connection refused` | Ollama not running or wrong `--base-url` | Start Ollama (`ollama serve`) and verify the URL |
+| `ERROR: Timed out waiting for model redeployment` | Model did not call `submit_fix` within 30 minutes | Check model output; the model may be stuck or looping |
+| `ModuleNotFoundError: No module named 'litellm'` | Dependencies not installed | Run `pip install -e .` |
 
 ---
 
