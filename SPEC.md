@@ -57,13 +57,15 @@ ace-bench/
 │   │   ├── cfn_lint_runner.py
 │   │   ├── file_differ.py
 │   │   └── result_logger.py
-│   ├── mcp_server/              # Phase B
-│   │   ├── index.js
+│   ├── mcp_server/              # Phase B — 50 tools, 27 services
+│   │   ├── index.js             # spreads all 5 tool arrays
 │   │   ├── package.json
 │   │   └── tools/
-│   │       ├── probe.js
-│   │       ├── observe.js
-│   │       └── score.js
+│   │       ├── probe.js          # 6 core probe tools
+│   │       ├── probe_extended.js # 19 extended probe tools
+│   │       ├── observe.js        # 6 core observe tools
+│   │       ├── observe_extended.js # 17 extended observe tools
+│   │       └── score.js          # 2 gated score tools
 │   ├── runner/                  # Phase C
 │   │   ├── scenario_runner.py
 │   │   ├── context_builder.py
@@ -305,14 +307,15 @@ results or surfaces root causes — they return raw signals only.
 
 `package.json` dependencies:
 - `@modelcontextprotocol/sdk` — MCP server protocol
-- `@aws-sdk/client-lambda`
-- `@aws-sdk/client-dynamodb`
-- `@aws-sdk/client-sqs`
-- `@aws-sdk/client-api-gateway-management-api`
-- `@aws-sdk/client-iam`
-- `@aws-sdk/client-cloudwatch-logs`
-- `@aws-sdk/client-s3`
-- `@aws-sdk/client-cloudformation`
+- `@aws-sdk/client-cloudformation`, `@aws-sdk/client-lambda`, `@aws-sdk/client-dynamodb`,
+  `@aws-sdk/client-dynamodb-streams`, `@aws-sdk/client-sqs`, `@aws-sdk/client-iam`,
+  `@aws-sdk/client-cloudwatch-logs`, `@aws-sdk/client-cloudwatch`, `@aws-sdk/client-s3`,
+  `@aws-sdk/client-s3-control`, `@aws-sdk/client-sns`, `@aws-sdk/client-eventbridge`,
+  `@aws-sdk/client-scheduler`, `@aws-sdk/client-sfn`, `@aws-sdk/client-swf`,
+  `@aws-sdk/client-ses`, `@aws-sdk/client-ec2`, `@aws-sdk/client-route-53`,
+  `@aws-sdk/client-route53resolver`, `@aws-sdk/client-kinesis`, `@aws-sdk/client-firehose`,
+  `@aws-sdk/client-kms`, `@aws-sdk/client-secrets-manager`, `@aws-sdk/client-sts`,
+  `@aws-sdk/client-ssm`, `@aws-sdk/util-dynamodb`
 
 All AWS clients share one config object:
 
@@ -325,8 +328,10 @@ const awsConfig = {
 ```
 
 `index.js` — imports tool definitions from `tools/probe.js`,
-`tools/observe.js`, `tools/score.js`, registers all tools with the
-MCP server, starts stdio transport.
+`tools/probe_extended.js`, `tools/observe.js`,
+`tools/observe_extended.js`, `tools/score.js`, spreads all five
+arrays into a single loop that registers each tool with the MCP
+server, then starts stdio transport.
 
 Every tool call must:
 1. Validate required parameters before calling AWS — return a
@@ -426,6 +431,59 @@ ace_get_environment_variables(function_name)
   Empty dict if no environment variables set.
 ```
 
+### B2b — Extended probe tools (`tools/probe_extended.js`)
+
+Nineteen additional probe tools covering services beyond the core set.
+Each follows the same pattern as B2: structured input, raw AWS SDK
+response, `{error, error_type}` on failure. All share a single
+`awsConfig` identical to B1.
+
+```
+ace_publish_sns(topic_arn, message, subject?)             → {message_id, sequence_number}
+ace_put_events(bus_name, source, detail_type, detail?)    → {failed_entry_count, entries[]}
+ace_start_execution(state_machine_arn, input?)            → {execution_arn, status, output, error, cause}
+ace_count_open_executions(domain)                         → {count, truncated}
+ace_send_test_email(from, to, subject, body?)             → {message_id}
+ace_check_instance_state(instance_id)                     → {state, instance_type, public_ip, private_ip}
+ace_check_hosted_zone(hosted_zone_id)                     → {id, name, record_count, private_zone}
+ace_list_resolver_endpoints(direction?)                   → [{id, name, direction, status}]
+ace_put_kinesis_record(stream_name, data, partition_key)  → {shard_id, sequence_number}
+ace_put_firehose_record(delivery_stream_name, data)       → {record_id, encrypted}
+ace_get_stream_records(stream_arn)                        → {records[], shard_count}
+ace_encrypt_decrypt(key_id, plaintext)                    → {decrypted, matches, key_id}
+ace_get_secret(secret_id, version_stage?)                 → {name, arn, secret_string}
+ace_get_caller_identity()                                 → {account, user_id, arn}
+ace_assume_role(role_arn, session_name)                   → {access_key_id, expiration, assumed_role_arn}
+ace_get_parameter(name, with_decryption?)                 → {name, type, value, version}
+ace_list_access_points(account_id, bucket?)               → [{name, arn, bucket, network_origin}]
+ace_put_metric_data(namespace, metric_name, value, unit?) → {success, namespace, metric_name, value}
+ace_simulate_policy(policy_source_arn, action_names, resource_arns?) → [{action, resource, decision}]
+```
+
+### B3b — Extended observe tools (`tools/observe_extended.js`)
+
+Seventeen additional observe tools. Same pattern as B3.
+
+```
+ace_get_sns_topic(topic_arn)                 → {arn, subscriptions_confirmed, subscriptions_pending, policy}
+ace_get_eventbridge_rule(rule_name, bus?)    → {name, arn, state, schedule_expression, event_pattern, targets[]}
+ace_get_schedule(name, group_name?)          → {name, arn, state, schedule_expression, target_arn}
+ace_describe_state_machine(state_machine_arn) → {name, arn, status, type, role_arn, state_count}
+ace_describe_swf_domain(domain)             → {name, status, retention_period_days}
+ace_get_ses_identity(identities[])          → {identity: {verification_status, verification_token}}
+ace_describe_security_group(group_id)       → {group_id, group_name, vpc_id, inbound_rules[], outbound_rules[]}
+ace_list_dns_records(hosted_zone_id, type?) → [{name, type, ttl, values[], alias_target}]
+ace_get_resolver_endpoint(resolver_endpoint_id) → {id, name, direction, status, ip_address_count}
+ace_describe_kinesis_stream(stream_name)    → {stream_arn, stream_status, shard_count, retention_period_hours}
+ace_describe_firehose_stream(delivery_stream_name) → {arn, status, type, destinations[], encryption_status}
+ace_describe_dynamo_stream(stream_arn)      → {stream_arn, table_name, stream_status, view_type, shards[]}
+ace_describe_kms_key(key_id)               → {key_id, arn, state, key_usage, key_spec, rotation_enabled}
+ace_describe_secret(secret_id)             → {name, arn, rotation_enabled, rotation_lambda_arn, tags}
+ace_describe_parameters(path_prefix?, parameter_type?) → [{name, type, version, tier}]
+ace_get_public_access_block(account_id)    → {block_public_acls, ignore_public_acls, ...}
+ace_get_metric_statistics(namespace, metric_name, period?, statistics?, ...) → {label, datapoints[]}
+```
+
 ### B4 — Score tools (`tools/score.js`)
 
 Two tools, gated by `HARNESS_API_KEY`. Any call that does not
@@ -465,20 +523,22 @@ The harness Python code reads this via `python-dotenv`. Never commit `.env`.
 
 ### B — Verification
 
-Write `tests/test_mcp_server.js` using Node's built-in test runner:
+Write `tests/test_mcp_server.js` using Node's built-in test runner
+(`node --test`). LocalStack must be running before tests start.
 
-- Start a LocalStack container before tests (use `localstack start -d`,
-  poll until healthy)
-- Create minimal fixtures: one Lambda function (identity stub),
-  one DynamoDB table, one SQS queue
-- Call each of the six probe tools and assert the response shape
-  matches the defined return structure
-- Call each of the six observe tools and assert the response shape
-- Call a score tool without `harness_api_key` and assert the
-  unauthorized error response
-- Call a score tool with a wrong key and assert unauthorized
-- Call a score tool with the correct key and assert `not_implemented`
-  (stub response from B4)
+**Fixtures created in `before()` hook:**
+- Lambda function (identity stub), DynamoDB table, SQS queue,
+  CloudFormation stack (core fixtures)
+- SNS topic, Kinesis stream, KMS key, Secrets Manager secret,
+  SSM parameter (extended fixtures)
+
+**Test coverage (76 tests):**
+- Core probe tools (6): response shape + missing-arg error for each
+- Core observe tools (6): response shape + error conditions
+- Score tools (2): unauthorized without key, unauthorized with wrong key
+- Extended probe tools (19): success path + missing-arg/not-found error
+- Extended observe tools (17): success path + missing-arg/not-found error
+- Smoke test: `probeExtendedTools` and `observeExtendedTools` are arrays
 
 All tools must return structured responses, never throw uncaught
 exceptions, for all test cases including error conditions (resource

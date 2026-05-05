@@ -118,7 +118,7 @@ When `--model` is provided:
 1. The harness deploys the faulted scenario and prints context as usual.
 2. A daemon thread starts `run_agent_loop`, which:
    - Spawns the Node.js MCP server as a stdio subprocess (no manual registration needed).
-   - Discovers all MCP diagnostic tools at runtime.
+   - Discovers all 50 MCP diagnostic tools at runtime (see tool inventory below).
    - Filters out score tools (`ace_verify_fix`, `ace_score_run`) so the model cannot call them.
    - Adds Python-native file tools (`read_file`, `write_file`, `list_directory`, `submit_fix`).
    - Loops calling the LLM up to 50 turns (default), dispatching tool calls each turn.
@@ -131,6 +131,27 @@ File tool restrictions enforced by the agent:
 - `submit_fix`: writes the redeployment signal. First call is final — there is no second chance.
 
 If the agent thread crashes (auth error, network failure, etc.), the harness exits immediately with a clear error message instead of silently timing out.
+
+#### MCP diagnostic tool inventory
+
+The MCP server exposes 50 tools across 27 LocalStack services. The model has access to 48 of these (score tools are filtered out).
+
+**Core probe tools (6)** — `probe.js`:
+`ace_invoke_endpoint`, `ace_invoke_lambda`, `ace_check_queue_depth`, `ace_read_table_item`, `ace_check_event_source`, `ace_check_s3_object`
+
+**Extended probe tools (19)** — `probe_extended.js`:
+`ace_publish_sns`, `ace_put_events`, `ace_start_execution`, `ace_count_open_executions`, `ace_send_test_email`, `ace_check_instance_state`, `ace_check_hosted_zone`, `ace_list_resolver_endpoints`, `ace_put_kinesis_record`, `ace_put_firehose_record`, `ace_get_stream_records`, `ace_encrypt_decrypt`, `ace_get_secret`, `ace_get_caller_identity`, `ace_assume_role`, `ace_get_parameter`, `ace_list_access_points`, `ace_put_metric_data`, `ace_simulate_policy`
+
+**Core observe tools (6)** — `observe.js`:
+`ace_describe_resource`, `ace_list_resources`, `ace_get_iam_role`, `ace_get_log_tail`, `ace_get_stack_outputs`, `ace_get_environment_variables`
+
+**Extended observe tools (17)** — `observe_extended.js`:
+`ace_get_sns_topic`, `ace_get_eventbridge_rule`, `ace_get_schedule`, `ace_describe_state_machine`, `ace_describe_swf_domain`, `ace_get_ses_identity`, `ace_describe_security_group`, `ace_list_dns_records`, `ace_get_resolver_endpoint`, `ace_describe_kinesis_stream`, `ace_describe_firehose_stream`, `ace_describe_dynamo_stream`, `ace_describe_kms_key`, `ace_describe_secret`, `ace_describe_parameters`, `ace_get_public_access_block`, `ace_get_metric_statistics`
+
+**Score tools (2, harness-only)** — `score.js`:
+`ace_verify_fix`, `ace_score_run`
+
+**Services covered:** CloudFormation, Lambda, DynamoDB, DynamoDB Streams, SQS, IAM, CloudWatch Logs, CloudWatch Metrics, S3, S3 Control, SNS, EventBridge, EventBridge Scheduler, Step Functions, SWF, SES, EC2, Route 53, Route 53 Resolver, Kinesis Streams, Kinesis Firehose, KMS, Secrets Manager, STS, SSM, API Gateway (via HTTP fetch)
 
 ---
 

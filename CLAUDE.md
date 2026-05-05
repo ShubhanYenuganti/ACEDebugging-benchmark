@@ -104,13 +104,15 @@ ace-bench/
 │   │   ├── cfn_lint_runner.py
 │   │   ├── file_differ.py
 │   │   └── result_logger.py
-│   ├── mcp_server/               # Phase B
-│   │   ├── index.js
+│   ├── mcp_server/               # Phase B — 50 tools across 27 LocalStack services
+│   │   ├── index.js              # spreads all 5 tool arrays into MCP server
 │   │   ├── package.json
 │   │   └── tools/
-│   │       ├── probe.js
-│   │       ├── observe.js
-│   │       └── score.js
+│   │       ├── probe.js           # 6 original probe tools
+│   │       ├── probe_extended.js  # 19 new probe tools (SNS→IAM sim)
+│   │       ├── observe.js         # 6 original observe tools
+│   │       ├── observe_extended.js # 17 new observe tools (SNS→CloudWatch)
+│   │       └── score.js           # 2 score tools
 │   ├── runner/                   # Phase C
 │   │   ├── scenario_runner.py
 │   │   ├── context_builder.py
@@ -162,15 +164,3 @@ ace-bench/
     ├── test_scoring.py           # Phase F
     └── test_agent_loop.py        # Phase G
 ```
-
----
-
-## Inline Agent Architecture (Phase G)
-
-The `harness/agent/` package enables the harness to drive any LLM through a scenario without external tooling:
-
-- **`tools.py`** — Defines all tools in OpenAI function-calling format. `mcp_to_openai_tool()` converts MCP tool objects discovered at runtime. `filter_model_tools()` strips score tools. `dispatch_file_tool()` handles `read_file`, `write_file`, `list_directory`, `submit_fix` with security boundaries.
-- **`loop.py`** — `run_agent_loop()` is an async function that spawns the MCP server via `mcp.client.stdio`, discovers tools, and loops calling `litellm.completion()`. File tools are dispatched locally; MCP tools are dispatched via the session. Returns `True` if `submit_fix` was called.
-- **`run.py` integration** — When `--model` is set, `run.py` starts `run_agent_loop` in a daemon thread. The agent writes the signal file via `submit_fix`, the polling loop detects it, and the existing deploy/verify/score pipeline runs unchanged.
-
-LiteLLM handles provider-specific API differences automatically. The same OpenAI-format tool definitions work for Anthropic, OpenAI, Gemini, Ollama, and any OpenAI-compatible endpoint.
