@@ -448,20 +448,20 @@ ace_score_run(run_id, harness_api_key)
   Stub for now. Phase D implements the logic.
 ```
 
-### B5 — MCP server registration
+### B5 — MCP server usage
 
-After building, register the server with Claude Code:
+The inline agent runner (Phase G) spawns the MCP server automatically
+as a stdio subprocess — no manual registration is needed. The harness
+passes `HARNESS_API_KEY` and `LOCALSTACK_ENDPOINT` as environment
+variables to the subprocess.
+
+Generate a `HARNESS_API_KEY` and store it in `.env` at the project root:
 
 ```bash
-claude mcp add ace-bench-diagnostic-mcp \
-  -e HARNESS_API_KEY=$(openssl rand -hex 32) \
-  -e LOCALSTACK_ENDPOINT=http://localhost:4566 \
-  -- node harness/mcp_server/index.js
+echo "HARNESS_API_KEY=$(openssl rand -hex 32)" >> .env
 ```
 
-Store the generated `HARNESS_API_KEY` value in a `.env` file at
-the project root. The harness Python code reads it from there.
-Never commit `.env`.
+The harness Python code reads this via `python-dotenv`. Never commit `.env`.
 
 ### B — Verification
 
@@ -924,18 +924,19 @@ Sequence:
 7. `runner.start()` — deploy faulted.yaml, capture baseline
    assertions, write `faulted_baseline.json`
 8. `context = context_builder.build_context(scenario_dir)`
-9. Print the context to stdout in a format the model can read.
-   This is the handoff point — the human or automated test
-   framework presents this output to the model being evaluated.
-10. Wait for the model to trigger redeployment (the runner's
-    stderr tail handles this asynchronously). Block until
+9. Print the context to stdout.
+10. If `--model` is set, start the inline agent runner in a
+    daemon thread (Phase G). The agent spawns the MCP server,
+    drives the model, and writes the signal file on `submit_fix`.
+11. Wait for the signal file to appear. Block until
     `runner.submitted` is True or a timeout (default: 30 minutes)
     is reached.
-11. If timeout: write `verify_result.json` with
-    `outcome: "timed_out"` and exit.
-12. `verify_result = verify_loop.run_verify_loop(scenario_dir, run_id)`
-13. Print a human-readable summary of the verify result to stdout.
-14. Exit 0 if `verify_result["outcome"] == "completed"`, exit 1
+12. If timeout or agent crash: write `verify_result.json` with
+    `outcome: "timed_out"` or `"agent_error"` and exit.
+13. `verify_result = verify_loop.run_verify_loop(scenario_dir, run_id)`
+14. `score_result = scorer.score_run(run_id, base_dir)`
+15. Print a human-readable summary of the verify and score results.
+16. Exit 0 if `verify_result["outcome"] == "completed"`, exit 1
     otherwise.
 
 ### E2 — Human-readable summary format

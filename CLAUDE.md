@@ -23,12 +23,9 @@ pytest tests/test_agent_loop.py      # Phase G gate
 # Node MCP server tests (Phase B only)
 node --test tests/test_mcp_server.js
 
-# Run a scenario with inline agent (recommended)
+# Run a scenario
 python harness/run.py scenarios/<scenario_dir>/ \
   --model <provider/model> [--api-key <key>] [--base-url <url>]
-
-# Run a scenario without inline agent (external agent / legacy)
-python harness/run.py scenarios/<scenario_dir>/ [--run-id <id>]
 ```
 
 ---

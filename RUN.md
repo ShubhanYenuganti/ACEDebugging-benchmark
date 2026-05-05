@@ -36,11 +36,7 @@ The harness loads `.env` at startup via `python-dotenv`. Never commit `.env`.
 
 ---
 
-## Step 3 — Choose an Evaluation Mode
-
-The harness supports two modes for running models: **inline** (recommended) and **external**.
-
-### Mode A — Inline Agent (`--model` flag) — Recommended
+## Step 3 — Add an LLM Model to Evaluate
 
 The harness drives any LLM directly using [LiteLLM](https://docs.litellm.ai/) as a universal adapter. The MCP diagnostic server is spawned automatically as a subprocess — no manual registration required.
 
@@ -127,7 +123,7 @@ When `--model` is provided:
    - Adds Python-native file tools (`read_file`, `write_file`, `list_directory`, `submit_fix`).
    - Loops calling the LLM up to 50 turns (default), dispatching tool calls each turn.
 3. When the model calls `submit_fix`, the agent writes the signal file (`/tmp/ace-bench-update.json`).
-4. The main thread's polling loop detects the signal file and proceeds with deployment, verification, and scoring — exactly as in external mode.
+4. The main thread's polling loop detects the signal file and proceeds with deployment, verification, and scoring.
 
 File tool restrictions enforced by the agent:
 - `read_file`: reads any file in the scenario directory **except** `fault_manifest.json` and `known_good.yaml`. Path traversal is blocked.
@@ -135,46 +131,6 @@ File tool restrictions enforced by the agent:
 - `submit_fix`: writes the redeployment signal. First call is final — there is no second chance.
 
 If the agent thread crashes (auth error, network failure, etc.), the harness exits immediately with a clear error message instead of silently timing out.
-
-### Mode B — External Agent (legacy)
-
-Without `--model`, the harness prints the scenario context to stdout and waits up to 30 minutes for an external agent to write the signal file. This mode is useful for:
-
-- Interactive evaluation with Claude Code
-- Custom model scripts or agent frameworks
-- Debugging scenarios manually
-
-#### Using Claude Code as the external agent
-
-1. Register the MCP server with Claude Code (one-time):
-
-```bash
-claude mcp add ace-bench-diagnostic-mcp \
-  -e HARNESS_API_KEY=$(grep HARNESS_API_KEY .env | cut -d= -f2) \
-  -e LOCALSTACK_ENDPOINT=http://localhost:4566 \
-  -- node harness/mcp_server/index.js
-```
-
-2. Run the harness without `--model`:
-
-```bash
-python harness/run.py scenarios/arch01_fault01_security/
-```
-
-3. When the harness prints the `SCENARIO BRIEF` block and pauses, switch to a Claude Code session and paste the printed context. Claude Code uses the registered MCP tools to diagnose and fix the scenario. When done, it calls `localstack-deployer update-stack`.
-
-#### Writing a custom agent script
-
-Any script that writes the signal file triggers redeployment:
-
-```python
-import json, pathlib
-pathlib.Path("/tmp/ace-bench-update.json").write_text(
-    json.dumps({"trigger": "update-stack"})
-)
-```
-
-The harness polls for this file every second. The script must also make any file edits to `deployment/` and/or `faulted.yaml` before writing the signal file.
 
 ---
 
