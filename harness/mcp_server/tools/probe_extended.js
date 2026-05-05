@@ -4,6 +4,8 @@ import { SFNClient, StartExecutionCommand, DescribeExecutionCommand } from "@aws
 import { SWFClient, CountOpenWorkflowExecutionsCommand } from "@aws-sdk/client-swf";
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { EC2Client, DescribeInstancesCommand } from "@aws-sdk/client-ec2";
+import { Route53Client, GetHostedZoneCommand } from "@aws-sdk/client-route-53";
+import { Route53ResolverClient, ListResolverEndpointsCommand } from "@aws-sdk/client-route53resolver";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -17,6 +19,8 @@ const sfnClient = new SFNClient(awsConfig);
 const swfClient = new SWFClient(awsConfig);
 const sesClient = new SESClient(awsConfig);
 const ec2Client = new EC2Client(awsConfig);
+const r53Client = new Route53Client(awsConfig);
+const r53ResolverClient = new Route53ResolverClient(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -193,6 +197,58 @@ export const probeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "EC2_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_check_hosted_zone",
+    description: "Get Route 53 hosted zone details and its resource record set count",
+    inputSchema: {
+      type: "object",
+      properties: { hosted_zone_id: { type: "string" } },
+      required: ["hosted_zone_id"],
+    },
+    async handler({ hosted_zone_id } = {}) {
+      if (!hosted_zone_id) return { error: "hosted_zone_id is required" };
+      try {
+        const res = await r53Client.send(new GetHostedZoneCommand({ Id: hosted_zone_id }));
+        return {
+          id: res.HostedZone?.Id,
+          name: res.HostedZone?.Name,
+          record_count: res.HostedZone?.ResourceRecordSetCount,
+          private_zone: res.HostedZone?.Config?.PrivateZone ?? false,
+          comment: res.HostedZone?.Config?.Comment ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "R53_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_list_resolver_endpoints",
+    description: "List Route 53 Resolver endpoints, optionally filtered by direction (INBOUND|OUTBOUND)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        direction: { type: "string", enum: ["INBOUND", "OUTBOUND"] },
+      },
+    },
+    async handler({ direction } = {}) {
+      try {
+        const params = direction
+          ? { Filters: [{ Name: "Direction", Values: [direction] }] }
+          : {};
+        const res = await r53ResolverClient.send(new ListResolverEndpointsCommand(params));
+        return (res.ResolverEndpoints ?? []).map(e => ({
+          id: e.Id,
+          name: e.Name,
+          direction: e.Direction,
+          status: e.Status,
+          ip_address_count: e.IpAddressCount,
+          host_vpc_id: e.HostVPCId,
+        }));
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "R53R_ERROR" };
       }
     },
   },

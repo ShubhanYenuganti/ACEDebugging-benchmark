@@ -366,3 +366,38 @@ test("ace_describe_security_group: missing args returns error", async () => {
   const result = await observeExtendedTools.find(t => t.name === "ace_describe_security_group").handler({});
   assert.ok(result.error);
 });
+
+// === Route 53 ===
+test("ace_check_hosted_zone: nonexistent zone returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_check_hosted_zone")
+    .handler({ hosted_zone_id: "/hostedzone/ZDEADBEEF0" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_check_hosted_zone: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_check_hosted_zone").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_list_dns_records: nonexistent zone returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_list_dns_records")
+    .handler({ hosted_zone_id: "/hostedzone/ZDEADBEEF0" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+// === Route 53 Resolver ===
+test("ace_list_resolver_endpoints: returns array", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_list_resolver_endpoints").handler({});
+  assert.ok(Array.isArray(result), JSON.stringify(result));
+});
+
+test("ace_get_resolver_endpoint: nonexistent endpoint returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_resolver_endpoint")
+    .handler({ resolver_endpoint_id: "rslvr-in-deadbeef000" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_get_resolver_endpoint: missing args returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_resolver_endpoint").handler({});
+  assert.ok(result.error);
+});

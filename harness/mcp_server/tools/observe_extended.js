@@ -5,6 +5,8 @@ import { SFNClient, DescribeStateMachineCommand } from "@aws-sdk/client-sfn";
 import { SWFClient, DescribeDomainCommand } from "@aws-sdk/client-swf";
 import { SESClient, GetIdentityVerificationAttributesCommand } from "@aws-sdk/client-ses";
 import { EC2Client, DescribeSecurityGroupsCommand } from "@aws-sdk/client-ec2";
+import { Route53Client, ListResourceRecordSetsCommand } from "@aws-sdk/client-route-53";
+import { Route53ResolverClient, GetResolverEndpointCommand } from "@aws-sdk/client-route53resolver";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -19,6 +21,8 @@ const sfnClient = new SFNClient(awsConfig);
 const swfClient = new SWFClient(awsConfig);
 const sesClient = new SESClient(awsConfig);
 const ec2Client = new EC2Client(awsConfig);
+const r53Client = new Route53Client(awsConfig);
+const r53ResolverClient = new Route53ResolverClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -224,6 +228,64 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "EC2_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_list_dns_records",
+    description: "List Route 53 DNS resource record sets in a hosted zone, optionally filtered by type",
+    inputSchema: {
+      type: "object",
+      properties: {
+        hosted_zone_id: { type: "string" },
+        record_type: { type: "string" },
+      },
+      required: ["hosted_zone_id"],
+    },
+    async handler({ hosted_zone_id, record_type } = {}) {
+      if (!hosted_zone_id) return { error: "hosted_zone_id is required" };
+      try {
+        const res = await r53Client.send(new ListResourceRecordSetsCommand({ HostedZoneId: hosted_zone_id }));
+        let records = (res.ResourceRecordSets ?? []).map(r => ({
+          name: r.Name,
+          type: r.Type,
+          ttl: r.TTL ?? null,
+          values: (r.ResourceRecords ?? []).map(rr => rr.Value),
+          alias_target: r.AliasTarget?.DNSName ?? null,
+        }));
+        if (record_type) records = records.filter(r => r.type === record_type);
+        return records;
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "R53_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_resolver_endpoint",
+    description: "Describe a Route 53 Resolver endpoint configuration and IP address count",
+    inputSchema: {
+      type: "object",
+      properties: { resolver_endpoint_id: { type: "string" } },
+      required: ["resolver_endpoint_id"],
+    },
+    async handler({ resolver_endpoint_id } = {}) {
+      if (!resolver_endpoint_id) return { error: "resolver_endpoint_id is required" };
+      try {
+        const res = await r53ResolverClient.send(
+          new GetResolverEndpointCommand({ ResolverEndpointId: resolver_endpoint_id })
+        );
+        const ep = res.ResolverEndpoint;
+        return {
+          id: ep?.Id,
+          name: ep?.Name,
+          direction: ep?.Direction,
+          status: ep?.Status,
+          ip_address_count: ep?.IpAddressCount,
+          host_vpc_id: ep?.HostVPCId,
+          security_group_ids: ep?.SecurityGroupIds ?? [],
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "R53R_ERROR" };
       }
     },
   },
