@@ -343,3 +343,26 @@ test("ace_get_ses_identity: missing args returns error", async () => {
   const result = await observeExtendedTools.find(t => t.name === "ace_get_ses_identity").handler({});
   assert.ok(result.error);
 });
+
+// === EC2 ===
+test("ace_check_instance_state: nonexistent instance returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_check_instance_state")
+    .handler({ instance_id: "i-0000000000000dead" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_check_instance_state: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_check_instance_state").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_describe_security_group: nonexistent group returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_security_group")
+    .handler({ group_id: "sg-000000000dead" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_describe_security_group: missing args returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_security_group").handler({});
+  assert.ok(result.error);
+});

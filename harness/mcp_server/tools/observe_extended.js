@@ -4,6 +4,7 @@ import { SchedulerClient, GetScheduleCommand } from "@aws-sdk/client-scheduler";
 import { SFNClient, DescribeStateMachineCommand } from "@aws-sdk/client-sfn";
 import { SWFClient, DescribeDomainCommand } from "@aws-sdk/client-swf";
 import { SESClient, GetIdentityVerificationAttributesCommand } from "@aws-sdk/client-ses";
+import { EC2Client, DescribeSecurityGroupsCommand } from "@aws-sdk/client-ec2";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -17,6 +18,7 @@ const schedulerClient = new SchedulerClient(awsConfig);
 const sfnClient = new SFNClient(awsConfig);
 const swfClient = new SWFClient(awsConfig);
 const sesClient = new SESClient(awsConfig);
+const ec2Client = new EC2Client(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -188,6 +190,40 @@ export const observeExtendedTools = [
         return out;
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SES_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_describe_security_group",
+    description: "Get EC2 security group inbound and outbound rules",
+    inputSchema: {
+      type: "object",
+      properties: { group_id: { type: "string" } },
+      required: ["group_id"],
+    },
+    async handler({ group_id } = {}) {
+      if (!group_id) return { error: "group_id is required" };
+      try {
+        const res = await ec2Client.send(new DescribeSecurityGroupsCommand({ GroupIds: [group_id] }));
+        const sg = res.SecurityGroups?.[0];
+        if (!sg) return { error: "security group not found", error_type: "NOT_FOUND" };
+        const mapRule = p => ({
+          protocol: p.IpProtocol,
+          from_port: p.FromPort ?? null,
+          to_port: p.ToPort ?? null,
+          cidr: (p.IpRanges ?? []).map(r => r.CidrIp),
+          cidr_ipv6: (p.Ipv6Ranges ?? []).map(r => r.CidrIpv6),
+        });
+        return {
+          group_id: sg.GroupId,
+          group_name: sg.GroupName,
+          description: sg.Description,
+          vpc_id: sg.VpcId ?? null,
+          inbound_rules: (sg.IpPermissions ?? []).map(mapRule),
+          outbound_rules: (sg.IpPermissionsEgress ?? []).map(mapRule),
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "EC2_ERROR" };
       }
     },
   },

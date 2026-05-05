@@ -3,6 +3,7 @@ import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge
 import { SFNClient, StartExecutionCommand, DescribeExecutionCommand } from "@aws-sdk/client-sfn";
 import { SWFClient, CountOpenWorkflowExecutionsCommand } from "@aws-sdk/client-swf";
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { EC2Client, DescribeInstancesCommand } from "@aws-sdk/client-ec2";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -15,6 +16,7 @@ const ebClient = new EventBridgeClient(awsConfig);
 const sfnClient = new SFNClient(awsConfig);
 const swfClient = new SWFClient(awsConfig);
 const sesClient = new SESClient(awsConfig);
+const ec2Client = new EC2Client(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -165,6 +167,32 @@ export const probeExtendedTools = [
         return { message_id: res.MessageId };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SES_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_check_instance_state",
+    description: "Get the current state, instance type, and network info for an EC2 instance",
+    inputSchema: {
+      type: "object",
+      properties: { instance_id: { type: "string" } },
+      required: ["instance_id"],
+    },
+    async handler({ instance_id } = {}) {
+      if (!instance_id) return { error: "instance_id is required" };
+      try {
+        const res = await ec2Client.send(new DescribeInstancesCommand({ InstanceIds: [instance_id] }));
+        const inst = res.Reservations?.[0]?.Instances?.[0];
+        if (!inst) return { error: "instance not found", error_type: "NOT_FOUND" };
+        return {
+          state: inst.State?.Name,
+          instance_type: inst.InstanceType,
+          public_ip: inst.PublicIpAddress ?? null,
+          private_ip: inst.PrivateIpAddress ?? null,
+          launch_time: inst.LaunchTime?.toISOString() ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "EC2_ERROR" };
       }
     },
   },
