@@ -8,6 +8,11 @@ import { EC2Client, DescribeSecurityGroupsCommand } from "@aws-sdk/client-ec2";
 import { Route53Client, ListResourceRecordSetsCommand } from "@aws-sdk/client-route-53";
 import { Route53ResolverClient, GetResolverEndpointCommand } from "@aws-sdk/client-route53resolver";
 import { KinesisClient, DescribeStreamSummaryCommand } from "@aws-sdk/client-kinesis";
+import { FirehoseClient, DescribeDeliveryStreamCommand } from "@aws-sdk/client-firehose";
+import {
+  DynamoDBStreamsClient,
+  DescribeStreamCommand as DDBDescribeStreamCommand,
+} from "@aws-sdk/client-dynamodb-streams";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -25,6 +30,8 @@ const ec2Client = new EC2Client(awsConfig);
 const r53Client = new Route53Client(awsConfig);
 const r53ResolverClient = new Route53ResolverClient(awsConfig);
 const kinesisClient = new KinesisClient(awsConfig);
+const firehoseClient = new FirehoseClient(awsConfig);
+const dynamoStreamsClient = new DynamoDBStreamsClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -314,6 +321,72 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "KINESIS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_describe_firehose_stream",
+    description: "Describe a Kinesis Firehose delivery stream including status and destination configuration",
+    inputSchema: {
+      type: "object",
+      properties: { delivery_stream_name: { type: "string" } },
+      required: ["delivery_stream_name"],
+    },
+    async handler({ delivery_stream_name } = {}) {
+      if (!delivery_stream_name) return { error: "delivery_stream_name is required" };
+      try {
+        const res = await firehoseClient.send(
+          new DescribeDeliveryStreamCommand({ DeliveryStreamName: delivery_stream_name })
+        );
+        const desc = res.DeliveryStreamDescription;
+        return {
+          arn: desc?.DeliveryStreamARN,
+          status: desc?.DeliveryStreamStatus,
+          type: desc?.DeliveryStreamType,
+          destinations: (desc?.Destinations ?? []).map(d => ({
+            destination_id: d.DestinationId,
+            s3_bucket: d.ExtendedS3DestinationDescription?.BucketARN
+              ?? d.S3DestinationDescription?.BucketARN
+              ?? null,
+            http_url: d.HttpEndpointDestinationDescription?.EndpointConfiguration?.Url ?? null,
+          })),
+          encryption_status: desc?.DeliveryStreamEncryptionConfiguration?.Status ?? "DISABLED",
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "FIREHOSE_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_describe_dynamo_stream",
+    description: "Describe a DynamoDB stream including status, view type, and shard list",
+    inputSchema: {
+      type: "object",
+      properties: { stream_arn: { type: "string" } },
+      required: ["stream_arn"],
+    },
+    async handler({ stream_arn } = {}) {
+      if (!stream_arn) return { error: "stream_arn is required" };
+      try {
+        const res = await dynamoStreamsClient.send(
+          new DDBDescribeStreamCommand({ StreamArn: stream_arn })
+        );
+        const desc = res.StreamDescription;
+        return {
+          stream_arn: desc?.StreamArn,
+          table_name: desc?.TableName,
+          stream_status: desc?.StreamStatus,
+          view_type: desc?.StreamViewType,
+          shard_count: desc?.Shards?.length ?? 0,
+          shards: (desc?.Shards ?? []).map(s => ({
+            shard_id: s.ShardId,
+            parent_shard_id: s.ParentShardId ?? null,
+            starting_sequence: s.SequenceNumberRange?.StartingSequenceNumber ?? null,
+            ending_sequence: s.SequenceNumberRange?.EndingSequenceNumber ?? null,
+          })),
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "DYNAMO_STREAMS_ERROR" };
       }
     },
   },

@@ -7,6 +7,14 @@ import { EC2Client, DescribeInstancesCommand } from "@aws-sdk/client-ec2";
 import { Route53Client, GetHostedZoneCommand } from "@aws-sdk/client-route-53";
 import { Route53ResolverClient, ListResolverEndpointsCommand } from "@aws-sdk/client-route53resolver";
 import { KinesisClient, PutRecordCommand as KinesisPutRecordCommand } from "@aws-sdk/client-kinesis";
+import { FirehoseClient, PutRecordCommand as FirehosePutRecordCommand } from "@aws-sdk/client-firehose";
+import {
+  DynamoDBStreamsClient,
+  DescribeStreamCommand as DDBDescribeStreamCommand,
+  GetShardIteratorCommand,
+  GetRecordsCommand,
+} from "@aws-sdk/client-dynamodb-streams";
+import { unmarshall } from "@aws-sdk/util-dynamodb";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -23,6 +31,8 @@ const ec2Client = new EC2Client(awsConfig);
 const r53Client = new Route53Client(awsConfig);
 const r53ResolverClient = new Route53ResolverClient(awsConfig);
 const kinesisClient = new KinesisClient(awsConfig);
+const firehoseClient = new FirehoseClient(awsConfig);
+const dynamoStreamsClient = new DynamoDBStreamsClient(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -282,6 +292,71 @@ export const probeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "KINESIS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_put_firehose_record",
+    description: "Put a test record to a Kinesis Firehose delivery stream",
+    inputSchema: {
+      type: "object",
+      properties: {
+        delivery_stream_name: { type: "string" },
+        data: { type: "string" },
+      },
+      required: ["delivery_stream_name", "data"],
+    },
+    async handler({ delivery_stream_name, data } = {}) {
+      if (!delivery_stream_name || !data)
+        return { error: "delivery_stream_name and data are required" };
+      try {
+        const res = await firehoseClient.send(new FirehosePutRecordCommand({
+          DeliveryStreamName: delivery_stream_name,
+          Record: { Data: Buffer.from(data) },
+        }));
+        return { record_id: res.RecordId, encrypted: res.Encrypted ?? false };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "FIREHOSE_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_stream_records",
+    description: "Read recent records from the latest shard of a DynamoDB stream",
+    inputSchema: {
+      type: "object",
+      properties: { stream_arn: { type: "string" } },
+      required: ["stream_arn"],
+    },
+    async handler({ stream_arn } = {}) {
+      if (!stream_arn) return { error: "stream_arn is required" };
+      try {
+        const descRes = await dynamoStreamsClient.send(
+          new DDBDescribeStreamCommand({ StreamArn: stream_arn })
+        );
+        const shards = descRes.StreamDescription?.Shards ?? [];
+        if (shards.length === 0) return { records: [], shard_count: 0 };
+        const shard_id = shards[shards.length - 1].ShardId;
+        const iterRes = await dynamoStreamsClient.send(new GetShardIteratorCommand({
+          StreamArn: stream_arn,
+          ShardId: shard_id,
+          ShardIteratorType: "TRIM_HORIZON",
+        }));
+        const recordsRes = await dynamoStreamsClient.send(new GetRecordsCommand({
+          ShardIterator: iterRes.ShardIterator,
+          Limit: 10,
+        }));
+        return {
+          records: (recordsRes.Records ?? []).map(r => ({
+            event_name: r.eventName,
+            keys: r.dynamodb?.Keys ? unmarshall(r.dynamodb.Keys) : {},
+            new_image: r.dynamodb?.NewImage ? unmarshall(r.dynamodb.NewImage) : null,
+            old_image: r.dynamodb?.OldImage ? unmarshall(r.dynamodb.OldImage) : null,
+          })),
+          shard_count: shards.length,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "DYNAMO_STREAMS_ERROR" };
       }
     },
   },

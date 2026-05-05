@@ -428,3 +428,39 @@ test("ace_describe_kinesis_stream: nonexistent stream returns error", async () =
     .handler({ stream_name: "no-such-stream-xyz" });
   assert.ok(result.error, JSON.stringify(result));
 });
+
+// === Kinesis Firehose ===
+test("ace_put_firehose_record: nonexistent stream returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_put_firehose_record")
+    .handler({ delivery_stream_name: "no-such-firehose-xyz", data: "test-data" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_put_firehose_record: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_put_firehose_record").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_describe_firehose_stream: nonexistent stream returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_firehose_stream")
+    .handler({ delivery_stream_name: "no-such-firehose-xyz" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+// === DynamoDB Streams ===
+test("ace_get_stream_records: nonexistent stream ARN returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_get_stream_records")
+    .handler({ stream_arn: "arn:aws:dynamodb:us-east-1:000000000000:table/no-table/stream/2020-01-01T00:00:00.000" });
+  assert.ok(result.error, JSON.stringify(result));
+});
+
+test("ace_get_stream_records: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_get_stream_records").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_describe_dynamo_stream: nonexistent stream ARN returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_describe_dynamo_stream")
+    .handler({ stream_arn: "arn:aws:dynamodb:us-east-1:000000000000:table/no-table/stream/2020-01-01T00:00:00.000" });
+  assert.ok(result.error, JSON.stringify(result));
+});
