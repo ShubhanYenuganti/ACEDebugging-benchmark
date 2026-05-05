@@ -1,7 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { probeTools } from "./tools/probe.js";
+import { probeExtendedTools } from "./tools/probe_extended.js";
 import { observeTools } from "./tools/observe.js";
+import { observeExtendedTools } from "./tools/observe_extended.js";
 import { scoreTools } from "./tools/score.js";
 
 const server = new McpServer({
@@ -9,7 +11,7 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-for (const tool of [...probeTools, ...observeTools, ...scoreTools]) {
+for (const tool of [...probeTools, ...probeExtendedTools, ...observeTools, ...observeExtendedTools, ...scoreTools]) {
   server.tool(
     tool.name,
     tool.description,
