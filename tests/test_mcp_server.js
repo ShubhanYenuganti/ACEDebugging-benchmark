@@ -217,3 +217,28 @@ test("probe_extended and observe_extended export arrays", () => {
   assert.ok(Array.isArray(probeExtendedTools));
   assert.ok(Array.isArray(observeExtendedTools));
 });
+
+// === SNS ===
+test("ace_publish_sns: returns message_id", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_publish_sns")
+    .handler({ topic_arn: TOPIC_ARN, message: "hello from test" });
+  assert.ok("message_id" in result, JSON.stringify(result));
+});
+
+test("ace_publish_sns: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_publish_sns").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_get_sns_topic: returns subscription counts", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_sns_topic")
+    .handler({ topic_arn: TOPIC_ARN });
+  assert.ok("subscriptions_confirmed" in result, JSON.stringify(result));
+  assert.ok("subscriptions_pending" in result);
+  assert.ok("arn" in result);
+});
+
+test("ace_get_sns_topic: missing args returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_sns_topic").handler({});
+  assert.ok(result.error);
+});
