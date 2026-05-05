@@ -2,6 +2,7 @@ import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge";
 import { SFNClient, StartExecutionCommand, DescribeExecutionCommand } from "@aws-sdk/client-sfn";
 import { SWFClient, CountOpenWorkflowExecutionsCommand } from "@aws-sdk/client-swf";
+import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -13,6 +14,7 @@ const snsClient = new SNSClient(awsConfig);
 const ebClient = new EventBridgeClient(awsConfig);
 const sfnClient = new SFNClient(awsConfig);
 const swfClient = new SWFClient(awsConfig);
+const sesClient = new SESClient(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -133,6 +135,36 @@ export const probeExtendedTools = [
         return { count: res.count, truncated: res.truncated };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SWF_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_send_test_email",
+    description: "Send a test email via SES (LocalStack mock) and return the message ID",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string" },
+        to: { type: "string" },
+        subject: { type: "string" },
+        body: { type: "string" },
+      },
+      required: ["from", "to", "subject"],
+    },
+    async handler({ from, to, subject, body = "ACE-Bench diagnostic test email" } = {}) {
+      if (!from || !to || !subject) return { error: "from, to, and subject are required" };
+      try {
+        const res = await sesClient.send(new SendEmailCommand({
+          Source: from,
+          Destination: { ToAddresses: [to] },
+          Message: {
+            Subject: { Data: subject },
+            Body: { Text: { Data: body } },
+          },
+        }));
+        return { message_id: res.MessageId };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SES_ERROR" };
       }
     },
   },

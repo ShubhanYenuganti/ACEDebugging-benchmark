@@ -10,6 +10,7 @@ import { KinesisClient, CreateStreamCommand } from "@aws-sdk/client-kinesis";
 import { KMSClient, CreateKeyCommand } from "@aws-sdk/client-kms";
 import { SecretsManagerClient, CreateSecretCommand } from "@aws-sdk/client-secrets-manager";
 import { SSMClient, PutParameterCommand } from "@aws-sdk/client-ssm";
+import { SESClient, VerifyEmailIdentityCommand } from "@aws-sdk/client-ses";
 
 import { probeTools } from "../harness/mcp_server/tools/probe.js";
 import { observeTools } from "../harness/mcp_server/tools/observe.js";
@@ -34,6 +35,7 @@ const kinesisCl = new KinesisClient(awsConfig);
 const kmsCl = new KMSClient(awsConfig);
 const secretsCl = new SecretsManagerClient(awsConfig);
 const ssmCl = new SSMClient(awsConfig);
+const sesCl = new SESClient(awsConfig);
 
 const FN = "test-identity-fn";
 const TABLE = "test-table";
@@ -113,6 +115,9 @@ before(async () => {
     Type: "String",
     Overwrite: true,
   }));
+
+  // SES identity verification (LocalStack auto-verifies)
+  await sesCl.send(new VerifyEmailIdentityCommand({ EmailAddress: "test@example.com" }));
 });
 
 // Probe tools
@@ -313,4 +318,28 @@ test("ace_describe_swf_domain: nonexistent domain returns error", async () => {
   const result = await observeExtendedTools.find(t => t.name === "ace_describe_swf_domain")
     .handler({ domain: "no-such-domain-xyz" });
   assert.ok(result.error, JSON.stringify(result));
+});
+
+// === SES ===
+test("ace_send_test_email: returns message_id", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_send_test_email")
+    .handler({ from: "test@example.com", to: "dest@example.com", subject: "ACE Test" });
+  assert.ok("message_id" in result, JSON.stringify(result));
+});
+
+test("ace_send_test_email: missing args returns error", async () => {
+  const result = await probeExtendedTools.find(t => t.name === "ace_send_test_email").handler({});
+  assert.ok(result.error);
+});
+
+test("ace_get_ses_identity: returns verification status per identity", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_ses_identity")
+    .handler({ identities: ["test@example.com"] });
+  assert.ok(typeof result === "object" && !Array.isArray(result), JSON.stringify(result));
+  assert.ok("test@example.com" in result);
+});
+
+test("ace_get_ses_identity: missing args returns error", async () => {
+  const result = await observeExtendedTools.find(t => t.name === "ace_get_ses_identity").handler({});
+  assert.ok(result.error);
 });

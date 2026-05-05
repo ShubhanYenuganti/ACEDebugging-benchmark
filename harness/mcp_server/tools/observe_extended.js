@@ -3,6 +3,7 @@ import { EventBridgeClient, DescribeRuleCommand, ListTargetsByRuleCommand } from
 import { SchedulerClient, GetScheduleCommand } from "@aws-sdk/client-scheduler";
 import { SFNClient, DescribeStateMachineCommand } from "@aws-sdk/client-sfn";
 import { SWFClient, DescribeDomainCommand } from "@aws-sdk/client-swf";
+import { SESClient, GetIdentityVerificationAttributesCommand } from "@aws-sdk/client-ses";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -15,6 +16,7 @@ const ebClient = new EventBridgeClient(awsConfig);
 const schedulerClient = new SchedulerClient(awsConfig);
 const sfnClient = new SFNClient(awsConfig);
 const swfClient = new SWFClient(awsConfig);
+const sesClient = new SESClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -157,6 +159,35 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "SWF_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_ses_identity",
+    description: "Check SES verification status for one or more email or domain identities",
+    inputSchema: {
+      type: "object",
+      properties: {
+        identities: { type: "array", items: { type: "string" } },
+      },
+      required: ["identities"],
+    },
+    async handler({ identities } = {}) {
+      if (!identities?.length) return { error: "identities array is required" };
+      try {
+        const res = await sesClient.send(
+          new GetIdentityVerificationAttributesCommand({ Identities: identities })
+        );
+        const out = {};
+        for (const [id, attrs] of Object.entries(res.VerificationAttributes ?? {})) {
+          out[id] = {
+            verification_status: attrs.VerificationStatus,
+            verification_token: attrs.VerificationToken ?? null,
+          };
+        }
+        return out;
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SES_ERROR" };
       }
     },
   },
