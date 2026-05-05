@@ -2,14 +2,14 @@
 """harness/run.py — ACE-Bench evaluation entry point."""
 
 import argparse
+import asyncio
 import json
 import os
 import sys
 import threading
 import time
+import traceback
 import uuid
-
-import asyncio
 
 from dotenv import load_dotenv
 
@@ -251,23 +251,31 @@ def main() -> None:
     # Step 7 — hand off to model
     _print_context(ctx)
 
+    _agent_error: BaseException | None = None
+
     if args.model:
         _harness_key = os.environ.get("HARNESS_API_KEY", "")
-        _api_key = args.api_key
-        _base_url = args.base_url
+        if not _harness_key:
+            print("ERROR: HARNESS_API_KEY env var is required when --model is used", file=sys.stderr)
+            sys.exit(1)
 
         def _run_agent():
-            asyncio.run(
-                run_agent_loop(
-                    model=args.model,
-                    api_key=_api_key,
-                    base_url=_base_url,
-                    context=ctx,
-                    scenario_dir=scenario_dir,
-                    run_id=run_id,
-                    harness_api_key=_harness_key,
+            nonlocal _agent_error
+            try:
+                asyncio.run(
+                    run_agent_loop(
+                        model=args.model,
+                        api_key=args.api_key,
+                        base_url=args.base_url,
+                        context=ctx,
+                        scenario_dir=scenario_dir,
+                        run_id=run_id,
+                        harness_api_key=_harness_key,
+                    )
                 )
-            )
+            except BaseException as exc:
+                _agent_error = exc
+                traceback.print_exc()
 
         threading.Thread(target=_run_agent, daemon=True, name="agent-runner").start()
 
@@ -279,6 +287,11 @@ def main() -> None:
 
     deadline = time.monotonic() + _TIMEOUT_SECONDS
     while not runner.submitted or runner._last_deployment_outcome == "unknown":
+        if _agent_error is not None:
+            log_verify_result(run_id, {"outcome": "agent_error"})
+            print(f"ERROR: Agent crashed: {_agent_error}", file=sys.stderr)
+            sys.exit(1)
+
         if time.monotonic() > deadline:
             log_verify_result(run_id, {"outcome": "timed_out"})
             print("ERROR: Timed out waiting for model redeployment.", file=sys.stderr)
