@@ -110,6 +110,8 @@ def test_submit_fix_writes_signal(tmp_path, monkeypatch):
     result = dispatch_file_tool("submit_fix", {}, str(tmp_path))
     assert pathlib.Path(signal_path).exists()
     assert "submitted" in result.lower()
+    data = json.loads(pathlib.Path(signal_path).read_text())
+    assert data == {"trigger": "update-stack"}
 
 
 def test_file_tool_definitions_are_openai_format():
