@@ -33,7 +33,7 @@ def _publish(job_id, event_type, details):
 
 
 def lambda_handler(event, context):
-    job_id = str((event or {}).get("jobId") or uuid.uuid4())[:8]
+    job_id = str((event or {}).get("jobId") or uuid.uuid4())
     _publish(job_id, "JobCreated", {"jobCategory": "Architecture and Engineering", "employer": "a2z.com"})
     _publish(job_id, "JobSalaryUpdated", {"annualSalary": "$57,000"})
     _publish(job_id, "JobDeleted", {"reason": "filled"})
