@@ -17,11 +17,12 @@ LocalStack endpoint: http://localhost:4566
 Fake credentials: accessKeyId=test, secretAccessKey=test, region=us-east-1
 """
 
-import boto3
 import json
+import sys
 import time
 import uuid
-import sys
+
+import boto3
 import requests
 
 ENDPOINT = "http://localhost:4566"
@@ -65,6 +66,7 @@ def get_queue_url() -> str | None:
 
 # ── Assertion 1: Stack outputs present ────────────────────────────────────────
 
+
 def assert_stack_outputs():
     name = "stack_outputs_present"
     api = get_stack_output("ApiEndpoint")
@@ -73,11 +75,20 @@ def assert_stack_outputs():
     if api and table and queue:
         emit("pass", name, f"ApiEndpoint={api}")
     else:
-        missing = [k for k, v in [("ApiEndpoint", api), ("OrdersTableName", table), ("OrderQueueUrl", queue)] if not v]
+        missing = [
+            k
+            for k, v in [
+                ("ApiEndpoint", api),
+                ("OrdersTableName", table),
+                ("OrderQueueUrl", queue),
+            ]
+            if not v
+        ]
         emit("fail", name, f"Missing outputs: {missing}")
 
 
 # ── Assertion 2: Ingestion Lambda accepts a POST and returns 200 ───────────────
+
 
 def assert_ingestion_accepts_post() -> dict | None:
     name = "ingestion_accepts_post"
@@ -87,11 +98,13 @@ def assert_ingestion_accepts_post() -> dict | None:
         response = lmb.invoke(
             FunctionName=INGESTION_FN,
             InvocationType="RequestResponse",
-            Payload=json.dumps({
-                "httpMethod": "POST",
-                "body": json.dumps(payload),
-                "headers": {"Content-Type": "application/json"}
-            }).encode()
+            Payload=json.dumps(
+                {
+                    "httpMethod": "POST",
+                    "body": json.dumps(payload),
+                    "headers": {"Content-Type": "application/json"},
+                }
+            ).encode(),
         )
         body = json.loads(response["Payload"].read())
         status = body.get("statusCode", 0)
@@ -108,6 +121,7 @@ def assert_ingestion_accepts_post() -> dict | None:
 
 # ── Assertion 3: Order enqueued to SQS after ingestion ────────────────────────
 
+
 def assert_order_enqueued(order_id: str | None):
     name = "order_enqueued"
     if order_id is None:
@@ -120,14 +134,20 @@ def assert_order_enqueued(order_id: str | None):
     try:
         attrs = sqs.get_queue_attributes(
             QueueUrl=queue_url,
-            AttributeNames=["ApproximateNumberOfMessages",
-                            "ApproximateNumberOfMessagesNotVisible"]
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesNotVisible",
+            ],
         )["Attributes"]
         visible = int(attrs.get("ApproximateNumberOfMessages", 0))
         in_flight = int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0))
         total = visible + in_flight
         if total > 0:
-            emit("pass", name, f"queue depth={total} (visible={visible} in_flight={in_flight})")
+            emit(
+                "pass",
+                name,
+                f"queue depth={total} (visible={visible} in_flight={in_flight})",
+            )
         else:
             emit("fail", name, "Queue is empty after ingestion — message not enqueued")
     except Exception as e:
@@ -135,6 +155,7 @@ def assert_order_enqueued(order_id: str | None):
 
 
 # ── Assertion 4: Record written to DynamoDB by processor ──────────────────────
+
 
 def assert_record_written(order_id: str | None):
     name = "record_written"
@@ -148,8 +169,7 @@ def assert_record_written(order_id: str | None):
     while time.time() < deadline:
         try:
             response = ddb.get_item(
-                TableName=TABLE_NAME,
-                Key={"order_id": {"S": order_id}}
+                TableName=TABLE_NAME, Key={"order_id": {"S": order_id}}
             )
             if "Item" in response:
                 found = True
@@ -166,16 +186,14 @@ def assert_record_written(order_id: str | None):
 
 # ── Assertion 5: Written record contains full schema fields ───────────────────
 
+
 def assert_record_schema(order_id: str | None):
     name = "record_schema_complete"
     if order_id is None:
         emit("fail", name, "Skipped — no order_id from upstream assertions")
         return
     try:
-        response = ddb.get_item(
-            TableName=TABLE_NAME,
-            Key={"order_id": {"S": order_id}}
-        )
+        response = ddb.get_item(TableName=TABLE_NAME, Key={"order_id": {"S": order_id}})
         item = response.get("Item", {})
         required_fields = {"order_id", "item", "quantity", "status", "processed_at"}
         present = set(item.keys())
@@ -190,20 +208,28 @@ def assert_record_schema(order_id: str | None):
 
 # ── Assertion 6 (secondary): Processor function has event source mapping ──────
 
+
 def assert_event_source_mapping_secondary():
     name = "event_source_mapping_enabled_secondary"
     try:
-        mappings = lmb.list_event_source_mappings(FunctionName=PROCESSOR_FN)["EventSourceMappings"]
+        mappings = lmb.list_event_source_mappings(FunctionName=PROCESSOR_FN)[
+            "EventSourceMappings"
+        ]
         enabled = [m for m in mappings if m.get("State") == "Enabled"]
         if enabled:
             emit("pass", name, f"active mappings: {len(enabled)}")
         else:
-            emit("fail", name, f"no enabled event source mappings (total={len(mappings)})")
+            emit(
+                "fail",
+                name,
+                f"no enabled event source mappings (total={len(mappings)})",
+            )
     except Exception as e:
         emit("fail", name, f"Exception: {e}")
 
 
 # ── Assertion 7 (secondary): DynamoDB table exists and is ACTIVE ──────────────
+
 
 def assert_table_active_secondary():
     name = "table_active_secondary"
@@ -220,17 +246,19 @@ def assert_table_active_secondary():
 
 # ── Assertion 8 (secondary): Ingestion role has sqs:SendMessage ───────────────
 
+
 def assert_ingestion_iam_secondary():
     name = "ingestion_iam_send_message_secondary"
     iam = boto3.client("iam", endpoint_url=ENDPOINT, region_name=REGION, **CREDS)
     try:
         role = iam.get_role(RoleName="ace-bench-ingestion-role")["Role"]
-        policies = iam.list_role_policies(RoleName="ace-bench-ingestion-role")["PolicyNames"]
+        policies = iam.list_role_policies(RoleName="ace-bench-ingestion-role")[
+            "PolicyNames"
+        ]
         found_send = False
         for policy_name in policies:
             doc = iam.get_role_policy(
-                RoleName="ace-bench-ingestion-role",
-                PolicyName=policy_name
+                RoleName="ace-bench-ingestion-role", PolicyName=policy_name
             )["PolicyDocument"]
             for stmt in doc.get("Statement", []):
                 actions = stmt.get("Action", [])

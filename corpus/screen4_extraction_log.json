@@ -1,0 +1,483 @@
+{
+  "screen": 4,
+  "extracted_count": 5,
+  "architectures": [
+    {
+      "slug": "arch_01_mobile_in_app_purchase_validation_on_aws",
+      "architecture_name": "Mobile In-App Purchase Validation on AWS",
+      "files_written": [
+        "source.md",
+        "traffic_flow.md",
+        "known_good.yaml",
+        "functional_test.py"
+      ],
+      "cfn_lint_iterations": 1,
+      "cfn_lint_warnings": 0,
+      "assertion_count": {
+        "primary": 3,
+        "secondary": 2
+      },
+      "notes": "Template and test are executable reference scaffolds derived from a single-page PDF. External store validation, webhook signature verification, and exact production payload contracts require manual lookup and are explicitly documented as gaps in each file.",
+      "github": {
+        "screening_repo": null,
+        "screening_url": null,
+        "implementation_repo": null,
+        "implementation_url": null,
+        "default_branch": null,
+        "readme_url": null,
+        "notes": "PDF-derived survivor; no GitHub repository identified in the source document."
+      }
+    },
+    {
+      "slug": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+      "architecture_name": "Serverless Microservices with API Gateway, DynamoDB, SQS, and Lambda",
+      "files_written": [
+        "source.md",
+        "traffic_flow.md",
+        "known_good.yaml",
+        "functional_test.py"
+      ],
+      "cfn_lint_iterations": 1,
+      "cfn_lint_warnings": 0,
+      "assertion_count": {
+        "primary": 4,
+        "secondary": 3
+      },
+      "notes": "First LocalStack survivor extracted from localstack/microservices-apigateway-lambda-dynamodb-sqs-sample. The repository deploys through CDK via Makefile; known_good.yaml is a standalone CloudFormation translation of the CDK stack to avoid CDK asset-bucket coupling, and the original implementation package is copied under implementation/.",
+      "github": {
+        "screening_repo": "localstack-samples/sample-microservices-apigateway-lambda-dynamodb-sqs",
+        "screening_url": "https://github.com/localstack-samples/sample-microservices-apigateway-lambda-dynamodb-sqs",
+        "implementation_repo": "localstack/microservices-apigateway-lambda-dynamodb-sqs-sample",
+        "implementation_url": "https://github.com/localstack/microservices-apigateway-lambda-dynamodb-sqs-sample",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-microservices-apigateway-lambda-dynamodb-sqs/main/README.md",
+        "notes": "README points to a separate implementation repository; source package contents were copied from the implementation repository where needed."
+      }
+    },
+    {
+      "slug": "arch_02_fuzzy_movie_search",
+      "architecture_name": "Fuzzy Movie Search",
+      "files_written": [
+        "source.md",
+        "traffic_flow.md",
+        "known_good.yaml",
+        "functional_test.py"
+      ],
+      "cfn_lint_iterations": 1,
+      "cfn_lint_warnings": 0,
+      "assertion_count": {
+        "primary": 3,
+        "secondary": 3
+      },
+      "notes": "Extracted from the Terraform-based localstack/fuzzy-movie-search sample. known_good.yaml translates Terraform resources into CloudFormation and preserves Lambda source plus Terraform packaging under implementation/. The inline ingest function writes the raw request body to Kinesis to preserve the intended JSON indexing path.",
+      "github": {
+        "screening_repo": "localstack-samples/sample-fuzzy-movie-search-lambda-kinesis-elasticsearch",
+        "screening_url": "https://github.com/localstack-samples/sample-fuzzy-movie-search-lambda-kinesis-elasticsearch",
+        "implementation_repo": "localstack/fuzzy-movie-search",
+        "implementation_url": "https://github.com/localstack/fuzzy-movie-search",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-fuzzy-movie-search-lambda-kinesis-elasticsearch/main/README.md",
+        "notes": "README points to a separate implementation repository; source package contents were copied from the implementation repository where needed."
+      }
+    },
+    {
+      "slug": "arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+      "architecture_name": "Event-driven architecture with SNS FIFO, DynamoDB, Lambda, and S3",
+      "files_written": [
+        "source.md",
+        "traffic_flow.md",
+        "known_good.yaml",
+        "functional_test.py"
+      ],
+      "cfn_lint_iterations": 1,
+      "cfn_lint_warnings": 0,
+      "assertion_count": {
+        "primary": 3,
+        "secondary": 3
+      },
+      "notes": "Extracted from the SAM-based SNS FIFO sample. The original SAM source is copied under implementation/; known_good.yaml is a plain CloudFormation translation with inline Python handlers because the service requirements are boto3-only.",
+      "github": {
+        "screening_repo": "localstack-samples/sample-sam-sns-fifo-dynamodb-lambda",
+        "screening_url": "https://github.com/localstack-samples/sample-sam-sns-fifo-dynamodb-lambda",
+        "implementation_repo": "localstack/event-driven-architecture-with-amazon-sns-fifo",
+        "implementation_url": "https://github.com/localstack/event-driven-architecture-with-amazon-sns-fifo",
+        "default_branch": "master",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-sam-sns-fifo-dynamodb-lambda/master/README.md",
+        "notes": "README points to a separate implementation repository; extracted template and Lambda source from the implementation package where needed."
+      }
+    },
+    {
+      "slug": "arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
+      "architecture_name": "Event-driven architecture with SQS, Lambda, DynamoDB, and S3",
+      "files_written": [
+        "source.md",
+        "traffic_flow.md",
+        "known_good.yaml",
+        "functional_test.py"
+      ],
+      "cfn_lint_iterations": 2,
+      "cfn_lint_warnings": 0,
+      "assertion_count": {
+        "primary": 3,
+        "secondary": 3
+      },
+      "notes": "Extracted from the Python CDK S3 CSV ingestion sample. First lint pass had one W3037 warning for `sqs:SendMessageBatch`; the IAM action was removed because `sqs:SendMessage` covers batch sends.",
+      "github": {
+        "screening_repo": "localstack-samples/sample-sqs-lambda-dynamodb",
+        "screening_url": "https://github.com/localstack-samples/sample-sqs-lambda-dynamodb",
+        "implementation_repo": "localstack-samples/sample-sqs-lambda-dynamodb",
+        "implementation_url": "https://github.com/localstack-samples/sample-sqs-lambda-dynamodb",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-sqs-lambda-dynamodb/main/README.md",
+        "notes": "Extracted directly from the screening repository; source package contents copied under architecture implementation/."
+      }
+    }
+  ],
+  "skip": [
+    {
+      "slug": "arch_03_full_stack_serverless_shipment_management_app",
+      "architecture_name": "Full-Stack Serverless Shipment Management App",
+      "filename": "sample-terraform-fullstack-serverless-shipment-app.README.md",
+      "file_id": "localstack-samples/sample-terraform-fullstack-serverless-shipment-app",
+      "rule": "lambda_packaging_ambiguity",
+      "decision": "skip",
+      "justification": "Stopped at survivor #3 due to significant Lambda packaging ambiguity. The Lambda is Java 17, handler `dev.ancaghenade.shipmentpicturelambdavalidator.ServiceHandler::handleRequest`. Terraform expects a prebuilt local JAR at `shipment-picture-lambda-validator/target/shipment-picture-lambda-validator.jar`. The Makefile builds it with `cd shipment-picture-lambda-validator && mvn clean package shade:shade`. A standalone `known_good.yaml` cannot directly embed Java Lambda source like Python `ZipFile`. To make it deployable, we must either build and package the JAR beside the template or replace the Java Lambda with an inline Python equivalent, which would be a behavioral approximation. The SQS consumer is also the Spring Boot app, not an AWS Lambda consumer, so the terminal flow can mean either SQS message delivery or full app-side SSE update.",
+      "decision_options": [
+        "Preserve original packaging: build/copy the Java JAR into `implementation/` and make `known_good.yaml` reference an S3-deployed artifact path.",
+        "Normalize for ACE: replace the Java Lambda with inline Python that validates S3 object uploads, publishes SNS, and writes/verifies SQS delivery.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because its Lambda package and terminal consumer are app-coupled."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-terraform-fullstack-serverless-shipment-app",
+        "screening_url": "https://github.com/localstack-samples/sample-terraform-fullstack-serverless-shipment-app",
+        "implementation_repo": "localstack-samples/sample-terraform-fullstack-serverless-shipment-app",
+        "implementation_url": "https://github.com/localstack-samples/sample-terraform-fullstack-serverless-shipment-app",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-terraform-fullstack-serverless-shipment-app/main/README.md",
+        "notes": "Skipped due to ambiguous Terraform-to-CloudFormation translation and source packaging assumptions."
+      }
+    },
+    {
+      "slug": "arch_04_serverless_image_resizer_with_lambda_and_s3",
+      "architecture_name": "Serverless Image Resizer with Lambda and S3",
+      "filename": "sample-lambda-s3-image-resizer-hot-reload.README.md",
+      "file_id": "localstack-samples/sample-lambda-s3-image-resizer-hot-reload",
+      "rule": "native_lambda_dependency_packaging_ambiguity",
+      "decision": "skip",
+      "justification": "Stopped at survivor #4 due to significant Lambda packaging ambiguity. The main resize Lambda depends on `Pillow` from `lambdas/resize/requirements.txt`. The repo does not deploy from a portable CloudFormation/SAM template. It builds Lambda ZIPs with `deployment/build-lambdas.sh`. On macOS, the build script uses Docker with `public.ecr.aws/sam/build-python3.11` to install Linux-compatible dependencies. On Linux, it uses `pip3 install --platform manylinux2014_x86_64 --only-binary=:all:`. A standalone `known_good.yaml` cannot embed this Lambda with `ZipFile` because `Pillow` is a binary/native dependency. Replacing the resize function with inline Python would change the core behavior: the functional test expects the resized object to be smaller than the original, which requires actual image processing. The repo also has two deployment surfaces: `deployment/awslocal/deploy.sh` and `deployment/terraform/main.tf`. The Terraform version includes CloudFront, which was not in the survivor's allowlisted service summary and may be outside the intended ACE scope.",
+      "decision_options": [
+        "Preserve original packaging: build the Lambda ZIPs with `deployment/build-lambdas.sh`, copy them into `implementation/`, and make `known_good.yaml` reference packaged artifacts.",
+        "Normalize for ACE: replace the resize Lambda with an inline Python copy/stub flow, but mark it as behaviorally reduced because it will not truly resize images.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because its core Lambda requires native dependency packaging and the deployment surface is split between CLI and Terraform."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-lambda-s3-image-resizer-hot-reload",
+        "screening_url": "https://github.com/localstack-samples/sample-lambda-s3-image-resizer-hot-reload",
+        "implementation_repo": "localstack-samples/sample-lambda-s3-image-resizer-hot-reload",
+        "implementation_url": "https://github.com/localstack-samples/sample-lambda-s3-image-resizer-hot-reload",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-lambda-s3-image-resizer-hot-reload/main/README.md",
+        "notes": "Skipped due to ambiguous Lambda runtime dependency packaging and generated deployment behavior."
+      }
+    },
+    {
+      "slug": "arch_05_cloud_pods_collaboration_demo",
+      "architecture_name": "Cloud Pods Collaboration Demo",
+      "filename": "cloud-pods-collaboration-demo.README.md",
+      "file_id": "localstack-samples/cloud-pods-collaboration-demo",
+      "rule": "java_lambda_artifact_packaging_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #5 has significant Lambda packaging ambiguity. The product API deploys Java 21 Lambda handlers `lambda.AddProduct::handleRequest` and `lambda.GetProduct::handleRequest` from `lambda-functions/target/product-lambda.jar`. The repository includes Java source and a prebuilt 16 MB JAR, and the README instructs `cd lambda-functions && mvn clean package` before Terraform deployment. A standalone `known_good.yaml` cannot embed this Java Lambda artifact with `ZipFile`; it would need an external packaged artifact location or a predeployment upload step. Replacing the handlers with inline Python would be a behavioral approximation of the product API rather than a translation of the source code package.",
+      "decision_options": [
+        "Preserve original packaging: build or copy `lambda-functions/target/product-lambda.jar` into `implementation/` and make `known_good.yaml` reference an S3-deployed artifact path.",
+        "Normalize for ACE: replace the Java handlers with inline Python equivalents for POST/GET product operations against DynamoDB, documenting that the Lambda package is behaviorally approximated.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because its Lambda deployment depends on a Java JAR artifact outside CloudFormation `ZipFile` support."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/cloud-pods-collaboration-demo",
+        "screening_url": "https://github.com/localstack-samples/cloud-pods-collaboration-demo",
+        "implementation_repo": "localstack-samples/cloud-pods-collaboration-demo",
+        "implementation_url": "https://github.com/localstack-samples/cloud-pods-collaboration-demo",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/cloud-pods-collaboration-demo/main/README.md",
+        "notes": "Skipped because the demo is workflow-oriented and depends on Cloud Pods state rather than a clear deployable app template."
+      }
+    },
+    {
+      "slug": "arch_06_async_request_processing_with_lambda_and_step_functions",
+      "architecture_name": "Async Request Processing with Lambda and Step Functions",
+      "filename": "localstack-demo.README.md",
+      "file_id": "localstack-samples/localstack-demo",
+      "rule": "polyglot_lambda_asset_packaging_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #6 has significant deployment and Lambda packaging ambiguity. The repository deploys with AWS CDK and a Makefile that runs `bundle-ruby`, `bundle-node`, CDK bootstrap, CDK deploy, and a separate S3 frontend upload. The architecture uses multiple Lambda runtimes: Node.js for the HTTP handler, Ruby for the SQS handler, and Python for Step Functions tasks. The Ruby Lambda requires Docker-based `bundle install` into `vendor/bundle`, and the Node Lambda requires `npm install --omit=dev`. A standalone `known_good.yaml` cannot embed the Ruby and Node dependency packages with CloudFormation `ZipFile`, and a raw CDK synth would contain asset-bucket references rather than self-contained Lambda code. Replacing the handlers with inline Python would materially change the polyglot implementation and Step Functions task wiring.",
+      "decision_options": [
+        "Preserve original packaging: run the Makefile bundle steps, copy the CDK-synthesized assets into `implementation/`, and make `known_good.yaml` reference uploaded Lambda artifact keys.",
+        "Normalize for ACE: rewrite the Node/Ruby/Python Lambda chain as inline Python functions while preserving API Gateway, SQS, Step Functions, DynamoDB, and S3 observable state.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because its deployable behavior depends on CDK asset staging plus Docker-built Ruby and npm-built Node packages."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/localstack-demo",
+        "screening_url": "https://github.com/localstack-samples/localstack-demo",
+        "implementation_repo": "localstack/localstack-demo",
+        "implementation_url": "https://github.com/localstack/localstack-demo",
+        "default_branch": "master",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/localstack-demo/master/README.md",
+        "notes": "README points to a separate implementation repository; skipped due to ambiguity in translating generated Step Functions deployment artifacts."
+      }
+    },
+    {
+      "slug": "arch_07_serverless_data_processing_pipeline",
+      "architecture_name": "Serverless Data Processing Pipeline",
+      "filename": "serverless-data-processing-pipeline.README.md",
+      "file_id": "localstack-samples/serverless-data-processing-pipeline",
+      "rule": "go_custom_runtime_cdk_bundling_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #7 has significant deployment and Lambda packaging ambiguity. The stack is an AWS CDK app written in Go and each Lambda is a Go custom-runtime binary (`provided.al2`) built from `lambda/src/upstream`, `lambda/src/midstream`, and `lambda/src/downstream`. In non-hot-deploy mode CDK uses Docker bundling with `golang:1.21` and emits asset-bucket references; in hot-deploy mode it reads code from LocalStack's `hot-reload` bucket using local filesystem paths. A standalone `known_good.yaml` cannot embed these compiled Go binaries with `ZipFile`. The CDK stack also creates VPC resources and DynamoDB/Kinesis VPC endpoints that were not part of the survivor's service summary, so translating the full synthesized stack would expand the architecture beyond the intended ACE resource surface.",
+      "decision_options": [
+        "Preserve original packaging: build the Go bootstrap binaries for all three Lambda functions, copy the ZIP artifacts into `implementation/`, and make `known_good.yaml` reference uploaded artifact keys.",
+        "Normalize for ACE: rewrite the Go Lambdas as inline Python functions and omit VPC endpoint resources while preserving API Gateway, Kinesis, DynamoDB Streams, and CloudWatch metric side effects.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because it depends on CDK Docker bundling or hot-reload asset paths for custom-runtime Go Lambdas and includes extra VPC resources."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/serverless-data-processing-pipeline",
+        "screening_url": "https://github.com/localstack-samples/serverless-data-processing-pipeline",
+        "implementation_repo": "localstack-samples/serverless-data-processing-pipeline",
+        "implementation_url": "https://github.com/localstack-samples/serverless-data-processing-pipeline",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/serverless-data-processing-pipeline/main/README.md",
+        "notes": "Skipped due to ambiguity in generated deployment resources and source package boundaries."
+      }
+    },
+    {
+      "slug": "arch_09_dynamodb_ingestion_into_s3_with_kinesis_data_streams_and_firehose",
+      "architecture_name": "DynamoDB ingestion into S3 with Kinesis Data Streams and Firehose",
+      "filename": "sample-dynamodb-kinesisfirehose-s3-ingestion.README.md",
+      "file_id": "localstack-samples/sample-dynamodb-kinesisfirehose-s3-ingestion",
+      "rule": "cdk_l3_construct_and_node_lambda_asset_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #9 has significant deployment and source packaging ambiguity. The repository is a CDK TypeScript app that composes AWS Solutions Constructs (`@aws-solutions-constructs/aws-apigateway-dynamodb` and `aws-dynamodb-kinesisstreams-s3-v2`) rather than declaring a direct CloudFormation template. The Firehose transformation Lambda is a Node.js asset under `lambda/index.ts` and depends on `@aws-sdk/util-dynamodb`; CDK packages it via `lambda.Code.fromAsset`, producing asset-bucket references rather than standalone inline source. A faithful `known_good.yaml` would require synthesizing and preserving generated CDK resources from L3 constructs plus a packaged Node artifact. Rewriting the transformer inline without the npm dependency is possible but would be a behavioral normalization rather than a source-code package transfer.",
+      "decision_options": [
+        "Preserve original packaging: build the CDK app and Node Lambda asset, copy the generated asset bundle into `implementation/`, and make `known_good.yaml` reference uploaded artifact keys.",
+        "Normalize for ACE: manually model API Gateway, DynamoDB Kinesis streaming, Firehose, S3, and an inline dependency-free transformer function while documenting that the CDK L3 construct output is approximated.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because the deployable stack is generated by CDK L3 constructs and the Lambda package depends on a bundled npm asset."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-dynamodb-kinesisfirehose-s3-ingestion",
+        "screening_url": "https://github.com/localstack-samples/sample-dynamodb-kinesisfirehose-s3-ingestion",
+        "implementation_repo": "localstack-samples/sample-dynamodb-kinesisfirehose-s3-ingestion",
+        "implementation_url": "https://github.com/localstack-samples/sample-dynamodb-kinesisfirehose-s3-ingestion",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-dynamodb-kinesisfirehose-s3-ingestion/main/README.md",
+        "notes": "Skipped due to ambiguity around Kinesis Firehose delivery behavior and deployable template reconstruction."
+      }
+    },
+    {
+      "slug": "arch_10_terraform_init_hooks_demo",
+      "architecture_name": "Terraform Init Hooks Demo",
+      "filename": "terraform-init-hooks-demo.README.md",
+      "file_id": "localstack-samples/terraform-init-hooks-demo",
+      "rule": "non_application_demo_and_java_lambda_artifact_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #10 has significant extraction ambiguity. The survivor metadata lists no AWS services and describes a Terraform init-hook workflow rather than a concrete application traffic flow. Repository inspection shows a product API Terraform stack similar to the Cloud Pods demo, with Java 21 Lambda handlers `lambda.AddProduct::handleRequest` and `lambda.GetProduct::handleRequest` deployed from `target/product-lambda.jar` (44 MB). The README points to LocalStack extension init-hook behavior and Testcontainers rather than documenting an application architecture suitable for normalized corpus extraction. A standalone `known_good.yaml` cannot embed the Java JAR with `ZipFile`, and translating the app would require choosing between the workflow demo intent and the hidden product API resources.",
+      "decision_options": [
+        "Preserve original packaging: keep the Terraform init-hook demo intact, copy `target/product-lambda.jar`, and document a pre-upload/prebuild artifact deployment flow.",
+        "Normalize for ACE: ignore the init-hook workflow and rewrite the embedded product API as inline Python API Gateway/Lambda/DynamoDB resources, documenting that this changes the sample's actual purpose.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because the survivor metadata lacks a concrete service architecture and the discovered Lambda deployment depends on a Java JAR artifact."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/terraform-init-hooks-demo",
+        "screening_url": "https://github.com/localstack-samples/terraform-init-hooks-demo",
+        "implementation_repo": "localstack-samples/terraform-init-hooks-demo",
+        "implementation_url": "https://github.com/localstack-samples/terraform-init-hooks-demo",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/terraform-init-hooks-demo/main/README.md",
+        "notes": "Skipped because the sample centers on Terraform init hooks rather than a stable application traffic flow."
+      }
+    },
+    {
+      "slug": "arch_11_kinesis_to_firehose_to_redshift_data_pipeline",
+      "architecture_name": "Kinesis to Firehose to Redshift Data Pipeline",
+      "filename": "sample-cdk-kinesis-firehose-redshift.README.md",
+      "file_id": "localstack-samples/sample-cdk-kinesis-firehose-redshift",
+      "rule": "multi_phase_cdk_redshift_deployment_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #11 has significant deployment ambiguity. The README describes a two-phase CDK deployment (`KinesisFirehoseRedshiftStack1`, then `python -m utils/prepare_redshift.py`, then `KinesisFirehoseRedshiftStack2`) where an imperative Redshift preparation script runs between stacks. The terminal verification depends on a Redshift table populated by Firehose after that manual preparation step. A standalone `known_good.yaml` cannot represent the full deployment lifecycle without encoding the out-of-band database setup, credentials, and Redshift schema initialization. The sample also requires environment variables from `.env` and a test harness that restarts LocalStack between runs because Redshift cleanup is incomplete.",
+      "decision_options": [
+        "Preserve original deployment: keep the two CDK stacks plus `utils/prepare_redshift.py` and document a multi-step deployment procedure before running functional tests.",
+        "Normalize for ACE: replace Redshift with an S3-terminal assertion or a simplified inline schema bootstrap custom resource, documenting that the warehouse behavior is approximated.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because the deployable flow requires two CDK stacks separated by imperative Redshift preparation."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-cdk-kinesis-firehose-redshift",
+        "screening_url": "https://github.com/localstack-samples/sample-cdk-kinesis-firehose-redshift",
+        "implementation_repo": "localstack-samples/sample-cdk-kinesis-firehose-redshift",
+        "implementation_url": "https://github.com/localstack-samples/sample-cdk-kinesis-firehose-redshift",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-cdk-kinesis-firehose-redshift/main/README.md",
+        "notes": "Skipped due to ambiguity in generated CDK resources and Redshift/Firehose behavior under LocalStack."
+      }
+    },
+    {
+      "slug": "arch_13_loan_broker_with_step_functions",
+      "architecture_name": "Loan Broker with Step Functions",
+      "filename": "sample-loan-broker-stepfunctions-lambda.README.md",
+      "file_id": "localstack-samples/sample-loan-broker-stepfunctions-lambda",
+      "rule": "multi_stack_stepfunctions_seed_data_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #13 has significant deployment and initialization ambiguity. The sample deploys multiple CDK stacks (`LoanBroker-RecipientList-Stack` and `LoanBroker-PubSub-Stack`) with several JavaScript Lambda assets and Step Functions workflows. The documented test path requires an imperative pre-population step for `LoanBrokerBanksTable` before starting the state machine execution. A standalone `known_good.yaml` would need to merge multiple CDK stacks, encode state machine definitions, copy Lambda asset source, and decide whether the seed bank routing data belongs in CloudFormation or in the functional test. Without that decision, terminal quote aggregation behavior is not fully deployable from the template alone.",
+      "decision_options": [
+        "Preserve original deployment: synthesize both CDK stacks, preserve all Lambda assets, and keep the DynamoDB bank seed step as a required pre-test setup action.",
+        "Normalize for ACE: collapse the workflow into one CloudFormation template with inline JavaScript or Python handlers and seed the bank routing table from `functional_test.py` before execution.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because the Step Functions behavior depends on multi-stack CDK output plus imperative seed data."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-loan-broker-stepfunctions-lambda",
+        "screening_url": "https://github.com/localstack-samples/sample-loan-broker-stepfunctions-lambda",
+        "implementation_repo": "localstack/loan-broker-stepfunctions-lambda-app",
+        "implementation_url": "https://github.com/localstack/loan-broker-stepfunctions-lambda-app",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-loan-broker-stepfunctions-lambda/main/README.md",
+        "notes": "README points to a separate implementation repository; skipped due to ambiguous Step Functions-generated infrastructure and Lambda packaging."
+      }
+    },
+    {
+      "slug": "arch_14_anti_corruption_layer_pattern",
+      "architecture_name": "Anti-Corruption Layer Pattern",
+      "filename": "sample-anti-corruption-layer-pattern.README.md",
+      "file_id": "localstack-samples/sample-anti-corruption-layer-pattern",
+      "rule": "dotnet_lambda_package_copy_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #14 has significant Lambda packaging ambiguity. The sample is a .NET anti-corruption-layer pattern where the Lambda package must be built with `dotnet lambda package` inside `user-microservice-lambda/src/UserMicroserviceLambda`, then copied manually into `cdk-user-microservice/lambdas` before CDK deployment. A standalone `known_good.yaml` cannot embed the .NET Lambda ZIP with `ZipFile`, and a faithful deployment requires preserving the generated package plus the CDK project. Replacing the .NET handler with inline Python or JavaScript would remove the actual user microservice implementation and anti-corruption model translation semantics.",
+      "decision_options": [
+        "Preserve original packaging: run `dotnet lambda package`, copy `UserMicroserviceLambda.zip` into `implementation/`, and make `known_good.yaml` reference an uploaded artifact key.",
+        "Normalize for ACE: implement the user API and translation behavior as inline Python/JavaScript against DynamoDB, documenting that the .NET package is replaced.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because deployment depends on a manually built .NET Lambda ZIP copied into the CDK project."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-anti-corruption-layer-pattern",
+        "screening_url": "https://github.com/localstack-samples/sample-anti-corruption-layer-pattern",
+        "implementation_repo": "localstack-samples/sample-anti-corruption-layer-pattern",
+        "implementation_url": "https://github.com/localstack-samples/sample-anti-corruption-layer-pattern",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-anti-corruption-layer-pattern/main/README.md",
+        "notes": "Skipped due to ambiguity in generated IaC and service boundary mapping for the pattern implementation."
+      }
+    },
+    {
+      "slug": "arch_15_eventbridge_producer_and_consumer",
+      "architecture_name": "EventBridge Producer and Consumer",
+      "filename": "sample-eventbridge-producer-consumer.README.md",
+      "file_id": "localstack-samples/sample-eventbridge-producer-consumer",
+      "rule": "sam_node_dependency_packaging_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #15 has Lambda package ambiguity. The project is a SAM app with Node.js producer and consumer functions. The producer imports `aws-sdk` v2 from `atmProducer/package.json`, and the README instructs `cd atmProducer && npm install` before `samlocal build`. A standalone `known_good.yaml` cannot embed the installed `node_modules` dependency with `ZipFile`. Rewriting the producer as inline Python or dependency-free Node would preserve the EventBridge routing behavior but would not transfer the original Lambda package contents.",
+      "decision_options": [
+        "Preserve original packaging: run `npm install` and `samlocal build`, copy the packaged producer and consumer artifacts into `implementation/`, and make `known_good.yaml` reference uploaded artifact keys.",
+        "Normalize for ACE: rewrite the producer and consumers as inline dependency-free functions while preserving EventBridge rules and CloudWatch-log verification.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because the deployable SAM package depends on an npm-installed Lambda dependency."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-eventbridge-producer-consumer",
+        "screening_url": "https://github.com/localstack-samples/sample-eventbridge-producer-consumer",
+        "implementation_repo": "localstack-samples/sample-eventbridge-producer-consumer",
+        "implementation_url": "https://github.com/localstack-samples/sample-eventbridge-producer-consumer",
+        "default_branch": "master",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-eventbridge-producer-consumer/master/README.md",
+        "notes": "Skipped due to ambiguity around EventBridge rule/target reconstruction and source packaging."
+      }
+    },
+    {
+      "slug": "arch_16_cloud_pods_demo",
+      "architecture_name": "Cloud Pods Demo",
+      "filename": "localstack-cloud-pods-blogpost-demo.README.md",
+      "file_id": "localstack-samples/localstack-cloud-pods-blogpost-demo",
+      "rule": "cloud_pods_wrapper_and_java_lambda_packaging_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #16 has significant extraction ambiguity. The README states the repository supports a Cloud Pods blog post and points to the shipment-list demo as the original application. Its quick setup requires building `shipment-picture-lambda-validator` with Maven (`mvn clean package shade:shade`) before deployment, so it inherits the same Java Lambda JAR packaging problem as the shipment application. The primary purpose is Cloud Pods state snapshot/export rather than a self-contained application architecture, and a standalone `known_good.yaml` would need to choose between modeling the shipment workflow or modeling LocalStack state-management operations, which are not CloudFormation resources.",
+      "decision_options": [
+        "Preserve original packaging: build the shipment Java Lambda JAR, deploy the Terraform resources, and document Cloud Pods save/export as a separate post-deployment workflow.",
+        "Normalize for ACE: ignore Cloud Pods state management and rewrite the shipment workflow as inline Lambda resources, documenting that the sample purpose is changed.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because it is a Cloud Pods workflow wrapper around a Java-Lambda shipment demo."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/localstack-cloud-pods-blogpost-demo",
+        "screening_url": "https://github.com/localstack-samples/localstack-cloud-pods-blogpost-demo",
+        "implementation_repo": "localstack-samples/localstack-cloud-pods-blogpost-demo",
+        "implementation_url": "https://github.com/localstack-samples/localstack-cloud-pods-blogpost-demo",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/localstack-cloud-pods-blogpost-demo/main/README.md",
+        "notes": "Skipped because the sample is Cloud Pods state/demo oriented rather than a self-contained deployable architecture."
+      }
+    },
+    {
+      "slug": "arch_17_shipment_list_demo",
+      "architecture_name": "Shipment List Demo",
+      "filename": "sample-pro-version-shipment-list-demo-lambda-dynamodb-s3.README.md",
+      "file_id": "localstack-samples/sample-pro-version-shipment-list-demo-lambda-dynamodb-s3",
+      "rule": "spring_boot_app_and_java_lambda_packaging_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #17 has significant deployment and packaging ambiguity. The sample is a Spring Boot backend plus React frontend with Terraform-managed AWS resources. Its Lambda validator must be built as an uber-JAR with `mvn clean package shade:shade` before Terraform deployment, and the terminal behavior includes a running Spring Boot app consuming SQS notifications, not only AWS-managed resources. A standalone `known_good.yaml` cannot embed the Java Lambda JAR, cannot represent the locally running Spring Boot consumer, and would require deciding whether terminal verification means SQS delivery, DynamoDB/S3 state, or the application UI/SSE update.",
+      "decision_options": [
+        "Preserve original packaging: build the Java validator JAR, copy it into `implementation/`, deploy Terraform-equivalent resources, and keep Spring Boot startup as a required external test step.",
+        "Normalize for ACE: replace the Java validator and Spring Boot consumer behavior with inline Lambda/SQS/DynamoDB/S3 assertions, documenting the reduced application surface.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because core behavior spans a Java Lambda artifact and a locally running Spring Boot application."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-pro-version-shipment-list-demo-lambda-dynamodb-s3",
+        "screening_url": "https://github.com/localstack-samples/sample-pro-version-shipment-list-demo-lambda-dynamodb-s3",
+        "implementation_repo": "localstack-samples/sample-pro-version-shipment-list-demo-lambda-dynamodb-s3",
+        "implementation_url": "https://github.com/localstack-samples/sample-pro-version-shipment-list-demo-lambda-dynamodb-s3",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-pro-version-shipment-list-demo-lambda-dynamodb-s3/main/README.md",
+        "notes": "Skipped due to ambiguous Pro/version-dependent resources and generated deployment behavior."
+      }
+    },
+    {
+      "slug": "arch_18_serverless_transcription_pipeline",
+      "architecture_name": "Serverless Transcription Pipeline",
+      "filename": "sample-serverless-transcribe.README.md",
+      "file_id": "localstack-samples/sample-serverless-transcribe",
+      "rule": "serverless_framework_post_deploy_and_managed_transcribe_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #18 has significant deployment and verification ambiguity. The sample is deployed with the Serverless Framework, Serverless LocalStack plugin, and Serverless Lift plugin, then requires imperative post-deploy commands to configure S3 CORS and verify an SES identity. The runtime flow depends on Amazon Transcribe producing transcription output from uploaded audio and SES sending notification email, both of which require LocalStack Pro behavior and service-specific asynchronous semantics. A standalone `known_good.yaml` would need to reverse-engineer the Serverless-generated CloudFormation, preserve npm-packaged Lambda assets, and encode post-deploy CORS/SES setup that is not part of the template.",
+      "decision_options": [
+        "Preserve original deployment: run `npm install` and `sls package/deploy`, copy generated Serverless artifacts into `implementation/`, and keep S3 CORS plus SES verification as required post-deploy commands.",
+        "Normalize for ACE: replace Transcribe with a stub Lambda-generated transcript and inline the HTTP/S3/SES flow, documenting that managed transcription behavior is approximated.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because it depends on Serverless Framework packaging, post-deploy configuration commands, and asynchronous Transcribe/SES behavior."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-serverless-transcribe",
+        "screening_url": "https://github.com/localstack-samples/sample-serverless-transcribe",
+        "implementation_repo": "localstack/sample-transcribe-app",
+        "implementation_url": "https://github.com/localstack/sample-transcribe-app",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-serverless-transcribe/main/README.md",
+        "notes": "README points to a separate implementation repository; skipped due to ambiguous Transcribe service behavior and source packaging."
+      }
+    },
+    {
+      "slug": "arch_19_live_debugging_aws_lambda",
+      "architecture_name": "Live Debugging AWS Lambda",
+      "filename": "sample-livedebug-lambda.README.md",
+      "file_id": "localstack-samples/sample-livedebug-lambda",
+      "rule": "dotnet_hot_reload_cdktf_deployment_ambiguity",
+      "decision": "skip",
+      "justification": "Survivor #19 has significant deployment and packaging ambiguity. The sample is focused on live debugging C#/.NET Lambda functions using hot reload, Terraform CDK, Watchman, AWS profile configuration, and optional Visual Studio Lambda Test Tool workflows. The deployment path (`make local-cdktf-install`, `make local-cdktf-deploy`, `make watch-dotnet`) creates hot-reload Lambda behavior rather than a static Lambda artifact suitable for direct CloudFormation embedding. A standalone `known_good.yaml` cannot represent the watch/rebuild loop, IDE debugger workflow, or Terraform CDK asset generation, and rewriting the C# Lambda as inline code would remove the sample's purpose.",
+      "decision_options": [
+        "Preserve original workflow: keep Terraform CDK plus C# build/watch commands and document hot-reload deployment as a required external workflow.",
+        "Normalize for ACE: replace the C# Lambda with an inline Lambda that exercises S3/DynamoDB/SQS side effects, documenting that live-debug behavior is omitted.",
+        "Skip this survivor as not suitable for standalone CloudFormation extraction because its core value is .NET Lambda live debugging and hot-reload deployment rather than a static deployable template."
+      ],
+      "github": {
+        "screening_repo": "localstack-samples/sample-livedebug-lambda",
+        "screening_url": "https://github.com/localstack-samples/sample-livedebug-lambda",
+        "implementation_repo": "localstack-samples/sample-livedebug-lambda",
+        "implementation_url": "https://github.com/localstack-samples/sample-livedebug-lambda",
+        "default_branch": "main",
+        "readme_url": "https://raw.githubusercontent.com/localstack-samples/sample-livedebug-lambda/main/README.md",
+        "notes": "Skipped because the sample centers on live debugging workflow rather than a stable deployable traffic-flow benchmark."
+      }
+    }
+  ]
+}

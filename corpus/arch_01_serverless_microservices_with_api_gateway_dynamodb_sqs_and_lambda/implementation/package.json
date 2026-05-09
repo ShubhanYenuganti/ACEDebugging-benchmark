@@ -1,0 +1,31 @@
+{
+  "name": "friend-microservices",
+  "version": "0.1.0",
+  "bin": {
+    "friend-microservices": "bin/friend-microservices.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "cdklocal": "cdklocal",
+    "integ-test": "./run-integ-tests.sh"
+  },
+  "devDependencies": {
+    "@aws-cdk/integ-runner": "latest",
+    "@aws-cdk/integ-tests-alpha": "latest",
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^22.0.0",
+    "aws-cdk": "latest",
+    "aws-cdk-local": "^3.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.5.0"
+  },
+  "dependencies": {
+    "aigle": "^1.14.1",
+    "aws-cdk-lib": "latest",
+    "aws-sdk": "^2.1174.0",
+    "constructs": "^10.0.0",
+    "source-map-support": "^0.5.21"
+  }
+}
