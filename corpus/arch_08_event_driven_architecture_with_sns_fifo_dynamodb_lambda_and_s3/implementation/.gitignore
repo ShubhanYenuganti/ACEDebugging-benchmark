@@ -1,0 +1,5 @@
+.aws-sam/
+.venv/
+.vscode/
+.idea/
+virtualenv/
