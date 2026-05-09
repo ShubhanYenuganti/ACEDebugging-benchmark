@@ -191,38 +191,8 @@ Resources:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
       Code:
-        ZipFile: |
-          import os
-
-          import boto3
-          from botocore.exceptions import ClientError
-
-          table = boto3.resource("dynamodb").Table(os.environ["FRIEND_TABLE"])
-
-          def _s(image, key):
-              return image.get(key, {}).get("S")
-
-          def _delete_reverse(player_id, friend_id):
-              try:
-                  table.delete_item(
-                      Key={"player_id": friend_id, "friend_id": player_id},
-                      ConditionExpression="#state = :requested",
-                      ExpressionAttributeNames={"#state": "state"},
-                      ExpressionAttributeValues={":requested": "Requested"},
-                  )
-              except ClientError as exc:
-                  if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
-                      raise
-
-          def handler(event, context):
-              failures = []
-              for record in event.get("Records", []):
-                  try:
-                      image = record["dynamodb"]["OldImage"]
-                      _delete_reverse(_s(image, "player_id"), _s(image, "friend_id"))
-                  except Exception:
-                      failures.append({"itemIdentifier": record["dynamodb"]["SequenceNumber"]})
-              return {"batchItemFailures": failures}
+        S3Bucket: ace-bench-artifacts
+        S3Key: reject-state-handler.zip
 
   UnfriendStateHandlerFunction:
     Type: AWS::Lambda::Function
@@ -236,38 +206,8 @@ Resources:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
       Code:
-        ZipFile: |
-          import os
-
-          import boto3
-          from botocore.exceptions import ClientError
-
-          table = boto3.resource("dynamodb").Table(os.environ["FRIEND_TABLE"])
-
-          def _s(image, key):
-              return image.get(key, {}).get("S")
-
-          def _delete_reverse(player_id, friend_id):
-              try:
-                  table.delete_item(
-                      Key={"player_id": friend_id, "friend_id": player_id},
-                      ConditionExpression="#state = :friends",
-                      ExpressionAttributeNames={"#state": "state"},
-                      ExpressionAttributeValues={":friends": "Friends"},
-                  )
-              except ClientError as exc:
-                  if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
-                      raise
-
-          def handler(event, context):
-              failures = []
-              for record in event.get("Records", []):
-                  try:
-                      image = record["dynamodb"]["OldImage"]
-                      _delete_reverse(_s(image, "player_id"), _s(image, "friend_id"))
-                  except Exception:
-                      failures.append({"itemIdentifier": record["dynamodb"]["SequenceNumber"]})
-              return {"batchItemFailures": failures}
+        S3Bucket: ace-bench-artifacts
+        S3Key: unfriend-state-handler.zip
 
   ReadHandlerFunction:
     Type: AWS::Lambda::Function
@@ -281,40 +221,8 @@ Resources:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
       Code:
-        ZipFile: |
-          import json
-          import os
-          from decimal import Decimal
-
-          import boto3
-
-          table = boto3.resource("dynamodb").Table(os.environ["FRIEND_TABLE"])
-
-          def _json_default(value):
-              if isinstance(value, Decimal):
-                  return int(value)
-              raise TypeError(f"Unsupported type: {type(value)}")
-
-          def _response(status, body):
-              return {
-                  "statusCode": status,
-                  "headers": {"Content-Type": "application/json"},
-                  "body": json.dumps(body, default=_json_default),
-              }
-
-          def handler(event, context):
-              params = event.get("pathParameters") or {}
-              player_id = params.get("playerId")
-              friend_id = params.get("friendId")
-              if friend_id:
-                  result = table.get_item(Key={"player_id": player_id, "friend_id": friend_id})
-                  item = result.get("Item")
-                  return _response(200, item.get("state") if item else None)
-              result = table.query(
-                  KeyConditionExpression="player_id = :player_id",
-                  ExpressionAttributeValues={":player_id": player_id},
-              )
-              return _response(200, result.get("Items", []))
+        S3Bucket: ace-bench-artifacts
+        S3Key: read-handler.zip
 
   FrontQueueMapping:
     Type: AWS::Lambda::EventSourceMapping
