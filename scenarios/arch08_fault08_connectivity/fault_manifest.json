@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch08_fault08",
+  "fault_class": "connectivity",
+  "architecture": "arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "scenario_id": "arch08_fault08_connectivity",
+  "target_resource": "InventoryEventSourceMapping",
+  "target_property": "Properties.Enabled",
+  "injected_value": false,
+  "original_value": true,
+  "valid_fixes": [
+    "Set InventoryEventSourceMapping.Enabled to true (or remove the explicit false) and restore InventoryJobEventsQueue.VisibilityTimeout to 60 — both changes are required"
+  ],
+  "invalid_patches": [
+    "Restore only VisibilityTimeout to 60 without enabling the ESM — queue still accumulates with no consumer",
+    "Enable only the ESM without restoring VisibilityTimeout — leaves visibility timeout shorter than Lambda timeout, risking message re-delivery during processing"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": [
+    "ace_check_queue_depth(queue=InventoryJobEventsQueue) → messages growing steadily — queue accumulating with no consumer draining it",
+    "ace_check_event_source(function=InventoryFunction) → state: Disabled — ESM is not polling the queue",
+    "read faulted.yaml → InventoryEventSourceMapping.Enabled: false and InventoryJobEventsQueue.VisibilityTimeout: 5 — both properties confirm the disabled ESM and the short visibility timeout creating false cycling signals"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'inventory_terminal_state' fails",
+  "observable_symptom": "Producer invocation succeeds and analytics object storage receives objects correctly. The inventory queue depth grows steadily — messages accumulate because the ESM is disabled and no consumer polls the queue. The inventory function is never invoked. The inventory data store remains empty.",
+  "root_cause": "InventoryEventSourceMapping.Enabled is set to false, disabling the SQS-to-Lambda trigger entirely. The inventory function is never invoked regardless of how many messages accumulate in the queue. InventoryJobEventsQueue.VisibilityTimeout is also reduced to 5 seconds, causing messages to rapidly cycle back to visible and inflate the apparent queue depth, creating a misleading signal of consumer activity.",
+  "corpus_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "functional_test_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/functional_test.py",
+  "known_good_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/known_good.yaml"
+}

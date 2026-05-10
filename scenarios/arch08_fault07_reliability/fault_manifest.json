@@ -1,0 +1,35 @@
+{
+  "fault_id": "arch08_fault07",
+  "fault_class": "reliability",
+  "architecture": "arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "scenario_id": "arch08_fault07_reliability",
+  "target_resource": "InventoryJobEventsQueue",
+  "target_property": "Properties.RedrivePolicy.maxReceiveCount",
+  "injected_value": 1,
+  "original_value": 3,
+  "valid_fixes": [
+    "Restore InventoryJobEventsQueue.RedrivePolicy.maxReceiveCount to 3 and restore InventoryEventSourceMapping.FunctionResponseTypes to [ReportBatchItemFailures] — both changes are required"
+  ],
+  "invalid_patches": [
+    "Restore only maxReceiveCount to 3 without restoring ReportBatchItemFailures — a transient error on one record still fails the entire batch and retries it as a unit",
+    "Restore only FunctionResponseTypes to [ReportBatchItemFailures] without restoring maxReceiveCount — a single failed batch still DLQs all messages after one attempt"
+  ],
+  "optimal_tool_calls": 5,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": [
+    "ace_read_table_item(table=InventoryTable, key=test_job_id) → item absent; ace_check_queue_depth(queue=InventoryJobEventsQueue) → empty — ESM is enabled but no items written",
+    "ace_get_log_tail(function=InventoryFunction) → may show a Lambda error or no invocations depending on timing — ambiguous signal",
+    "ace_check_queue_depth(queue=InventoryJobEventsQueueDLQ) → messages present — confirms messages were DLQd rather than successfully processed",
+    "ace_get_iam_role(role=InventoryRole) and ace_get_environment_variables(function=InventoryFunction) → both correct — no fault found in IAM or env vars",
+    "read faulted.yaml → InventoryJobEventsQueue.RedrivePolicy.maxReceiveCount: 1 and InventoryEventSourceMapping.FunctionResponseTypes: [] — any batch-level error immediately dead-letters all messages with no retry opportunity"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'inventory_terminal_state' fails",
+  "observable_symptom": "Producer invocation succeeds and analytics object storage receives objects correctly. The inventory queue depth reaches zero quickly and the inventory DLQ accumulates messages. No item is written to the inventory data store. The inventory function may show a Lambda error in logs or no invocations at all depending on timing.",
+  "root_cause": "InventoryJobEventsQueue.RedrivePolicy.maxReceiveCount is set to 1, meaning any message that is received and not deleted within the visibility timeout moves to the DLQ after a single receive. InventoryEventSourceMapping.FunctionResponseTypes is emptied, disabling ReportBatchItemFailures. With partial-batch reporting disabled, any exception in the batch treats the whole batch as failed — the Lambda does not delete the messages from SQS, and SQS counts the entire batch as one receive. With maxReceiveCount: 1, any batch-level failure immediately exhausts the redrive limit and dead-letters all messages. Only the combination of both misconfigurations produces the immediate DLQ routing on first error.",
+  "corpus_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "functional_test_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/functional_test.py",
+  "known_good_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/known_good.yaml"
+}

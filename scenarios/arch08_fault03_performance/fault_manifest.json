@@ -1,0 +1,35 @@
+{
+  "fault_id": "arch08_fault03",
+  "fault_class": "performance",
+  "architecture": "arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "scenario_id": "arch08_fault03_performance",
+  "target_resource": "AnalyticsEventSourceMapping",
+  "target_property": "Properties.MaximumBatchingWindowInSeconds",
+  "injected_value": 120,
+  "original_value": null,
+  "valid_fixes": [
+    "Remove MaximumBatchingWindowInSeconds from AnalyticsEventSourceMapping and restore AnalyticsJobEventsQueue.VisibilityTimeout to 60 — both changes are required"
+  ],
+  "invalid_patches": [
+    "Restore only AnalyticsJobEventsQueue.VisibilityTimeout to 60 without removing MaximumBatchingWindowInSeconds — the 120-second batch window still prevents invocation within the test window",
+    "Remove only MaximumBatchingWindowInSeconds without restoring VisibilityTimeout — leaves visibility timeout shorter than Lambda timeout, risking message re-delivery during processing"
+  ],
+  "optimal_tool_calls": 5,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": [
+    "ace_check_queue_depth(queue=AnalyticsJobEventsQueue) → messages cycling between available and in-flight at ~30-second intervals, suggesting Lambda is being invoked but failing",
+    "ace_get_log_tail(function=AnalyticsFunction) → no log entries — function has never been invoked, contradicting queue cycling hypothesis",
+    "ace_check_event_source(function=AnalyticsFunction) → ESM enabled, batch_size 10, state Active — MaximumBatchingWindowInSeconds not surfaced by this tool",
+    "ace_get_iam_role(role=AnalyticsRole) and ace_get_environment_variables(function=AnalyticsFunction) → both correct, no fault found",
+    "read faulted.yaml → AnalyticsJobEventsQueue.VisibilityTimeout: 30 and AnalyticsEventSourceMapping.MaximumBatchingWindowInSeconds: 120 visible — 120-second batch window combined with 120-second test timeout means function never fires within window"
+  ],
+  "concurrency_probe_n": 10,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'analytics_object_created' fails",
+  "observable_symptom": "Producer invocation succeeds and the inventory path completes correctly. The analytics queue shows messages cycling between available and in-flight at roughly 30-second intervals, suggesting Lambda invocations are occurring but failing. However, the analytics function logs show zero invocations — the function has never been called. No analytics objects appear in object storage within the 120-second test window.",
+  "root_cause": "AnalyticsEventSourceMapping.MaximumBatchingWindowInSeconds is set to 120, instructing the Lambda poller to wait up to 120 seconds accumulating messages before triggering the function. The functional test times out at 120 seconds, exactly at the boundary when the batch window would first fire. Simultaneously, AnalyticsJobEventsQueue.VisibilityTimeout is reduced from 60 to 30 seconds — shorter than the 120-second batch window — causing messages to repeatedly become visible again before the batch window fires, creating the false appearance of cycling Lambda invocations. The ace_check_event_source tool does not surface MaximumBatchingWindowInSeconds, so the batch window is invisible to diagnostic tools and only discoverable by reading the template directly.",
+  "corpus_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "functional_test_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/functional_test.py",
+  "known_good_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/known_good.yaml"
+}

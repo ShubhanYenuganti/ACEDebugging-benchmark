@@ -1,0 +1,302 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Plain CloudFormation translation of the SAM SNS FIFO, SQS FIFO, Lambda, DynamoDB, and S3 sample.
+
+Resources:
+  JobEventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-job-events.fifo'
+      FifoTopic: true
+      ContentBasedDeduplication: false
+
+  AnalyticsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-analytics'
+
+  InventoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-inventory'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  AnalyticsJobEventsQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-analytics-dlq.fifo'
+      FifoQueue: true
+
+  AnalyticsJobEventsSubscriptionDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-analytics-subscription-dlq.fifo'
+      FifoQueue: true
+
+  AnalyticsJobEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-analytics-events.fifo'
+      FifoQueue: true
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AnalyticsJobEventsQueueDLQ.Arn
+        maxReceiveCount: 3
+
+  InventoryJobEventsQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-inventory-dlq.fifo'
+      FifoQueue: true
+
+  InventoryJobEventsSubscriptionDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-inventory-subscription-dlq.fifo'
+      FifoQueue: true
+
+  InventoryJobEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-inventory-events.fifo'
+      FifoQueue: true
+      VisibilityTimeout: 5  # FAULT INJECTION: reduced from 60 to 5 — messages rapidly cycle back visible, creating false appearance of consumer activity while ESM is disabled
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InventoryJobEventsQueueDLQ.Arn
+        maxReceiveCount: 3
+
+  AnalyticsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref AnalyticsJobEventsQueue
+        - !Ref AnalyticsJobEventsSubscriptionDLQ
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: sqs:SendMessage
+            Resource:
+              - !GetAtt AnalyticsJobEventsQueue.Arn
+              - !GetAtt AnalyticsJobEventsSubscriptionDLQ.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref JobEventsTopic
+
+  InventoryQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref InventoryJobEventsQueue
+        - !Ref InventoryJobEventsSubscriptionDLQ
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: sqs:SendMessage
+            Resource:
+              - !GetAtt InventoryJobEventsQueue.Arn
+              - !GetAtt InventoryJobEventsSubscriptionDLQ.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref JobEventsTopic
+
+  AnalyticsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt AnalyticsJobEventsQueue.Arn
+      Protocol: sqs
+      RawMessageDelivery: true
+      TopicArn: !Ref JobEventsTopic
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AnalyticsJobEventsSubscriptionDLQ.Arn
+
+  InventorySubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt InventoryJobEventsQueue.Arn
+      Protocol: sqs
+      RawMessageDelivery: true
+      TopicArn: !Ref JobEventsTopic
+      FilterPolicy:
+        eventType:
+          - JobCreated
+          - JobDeleted
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InventoryJobEventsSubscriptionDLQ.Arn
+
+  AntiCorruptionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: anti-corruption-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref JobEventsTopic
+
+  AnalyticsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: analytics-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt AnalyticsJobEventsQueue.Arn
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub '${AnalyticsBucket.Arn}/*'
+
+  InventoryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: inventory-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt InventoryJobEventsQueue.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt InventoryTable.Arn
+
+  AntiCorruptionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-anti-corruption'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt AntiCorruptionRole.Arn
+      Timeout: 20
+      Environment:
+        Variables:
+          TOPIC_ARN: !Ref JobEventsTopic
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: anti-corruption.zip
+
+  AnalyticsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-analytics'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt AnalyticsRole.Arn
+      Timeout: 20
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref AnalyticsBucket
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: analytics.zip
+
+  InventoryFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-inventory'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt InventoryRole.Arn
+      Timeout: 20
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref InventoryTable
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: inventory.zip
+
+  AnalyticsEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      EventSourceArn: !GetAtt AnalyticsJobEventsQueue.Arn
+      FunctionName: !Ref AnalyticsFunction
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  InventoryEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      Enabled: false  # FAULT INJECTION: set to false — inventory ESM is disabled and never polls the queue; messages accumulate indefinitely
+      EventSourceArn: !GetAtt InventoryJobEventsQueue.Arn
+      FunctionName: !Ref InventoryFunction
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+Outputs:
+  AntiCorruptionFunctionName:
+    Value: !Ref AntiCorruptionFunction
+  JobEventsTopicArn:
+    Value: !Ref JobEventsTopic
+  AnalyticsBucketName:
+    Value: !Ref AnalyticsBucket
+  AnalyticsQueueArn:
+    Value: !GetAtt AnalyticsJobEventsQueue.Arn
+  InventoryFunctionName:
+    Value: !Ref InventoryFunction
+  InventoryTableName:
+    Value: !Ref InventoryTable
+  InventoryQueueArn:
+    Value: !GetAtt InventoryJobEventsQueue.Arn

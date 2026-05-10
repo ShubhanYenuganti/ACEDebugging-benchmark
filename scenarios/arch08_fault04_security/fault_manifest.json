@@ -1,0 +1,35 @@
+{
+  "fault_id": "arch08_fault04",
+  "fault_class": "security",
+  "architecture": "arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "scenario_id": "arch08_fault04_security",
+  "target_resource": "InventoryRole",
+  "target_property": "Properties.Policies[0].PolicyDocument.Statement[1].Resource",
+  "injected_value": "!GetAtt AnalyticsBucket.Arn",
+  "original_value": "!GetAtt InventoryTable.Arn",
+  "valid_fixes": [
+    "Restore InventoryRole policy Resource for dynamodb:PutItem and dynamodb:UpdateItem to !GetAtt InventoryTable.Arn"
+  ],
+  "invalid_patches": [
+    "Add a wildcard resource (*) to the DynamoDB policy statement — grants excessive permissions beyond what the handler requires",
+    "Modify the handler to catch AccessDeniedException and silently skip — masks the permission error without fixing the root cause"
+  ],
+  "optimal_tool_calls": 5,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": [
+    "ace_read_table_item(table=InventoryTable, key=test_job_id) → item absent; ace_check_queue_depth(queue=InventoryJobEventsQueue) → empty — messages processed but nothing written",
+    "ace_get_log_tail(function=InventoryFunction) → AccessDeniedException errors on PutItem calls — clear IAM signal",
+    "ace_get_iam_role(role=InventoryRole) → dynamodb:PutItem and dynamodb:UpdateItem listed in Action — actions appear present; must also read Resource field",
+    "ace_get_environment_variables(function=InventoryFunction) → TABLE_NAME correct — eliminates wrong table name hypothesis",
+    "re-examine Resource field in IAM policy from ace_get_iam_role → ARN format is arn:aws:s3:::stack-analytics (S3 bucket ARN, not DynamoDB table ARN) — root cause identified"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'inventory_terminal_state' fails",
+  "observable_symptom": "Producer invocation succeeds and analytics object storage receives objects correctly. The inventory queue drains normally — messages are received and deleted after each invocation. However, the inventory data store remains empty. The inventory function logs show AccessDeniedException errors on PutItem calls for every invocation.",
+  "root_cause": "InventoryRole inline policy grants dynamodb:PutItem and dynamodb:UpdateItem on !GetAtt AnalyticsBucket.Arn (an S3 bucket ARN) instead of !GetAtt InventoryTable.Arn (the DynamoDB table ARN). The IAM actions appear present when inspecting the policy, but the resource ARN is semantically wrong — DynamoDB evaluates the request against the table ARN, which the role is not authorized for. Every put_item and update_item call is denied with AccessDeniedException. TABLE_NAME env var is correct, so the handler targets the right table name but the role cannot authorize writes to it.",
+  "corpus_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "functional_test_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/functional_test.py",
+  "known_good_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/known_good.yaml"
+}

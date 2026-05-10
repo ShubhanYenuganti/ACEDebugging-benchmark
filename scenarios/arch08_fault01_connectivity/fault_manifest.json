@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch08_fault01",
+  "fault_class": "connectivity",
+  "architecture": "arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "scenario_id": "arch08_fault01_connectivity",
+  "target_resource": "InventorySubscription",
+  "target_property": "Properties.FilterPolicy",
+  "injected_value": "{\"eventSource\": [\"anti-corruption-service\"]}",
+  "original_value": "{\"eventType\": [\"JobCreated\", \"JobDeleted\"]}",
+  "valid_fixes": [
+    "Restore InventorySubscription.FilterPolicy to filter on eventType with values JobCreated and JobDeleted"
+  ],
+  "invalid_patches": [
+    "Add eventSource as a MessageAttribute in the anti-corruption handler so the filter matches",
+    "Remove the FilterPolicy entirely so all events reach the inventory queue"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": [
+    "ace_check_queue_depth(queue=InventoryJobEventsQueue) → queue depth is 0 despite producer invocation succeeding",
+    "ace_get_sns_topic(topic=JobEventsTopic) → topic shows messages published; check subscriptions",
+    "ace_describe_resource(resource=InventorySubscription) → FilterPolicy uses eventSource key, but published MessageAttributes only contain eventType — filter never matches"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "assert_inventory_terminal_state",
+  "observable_symptom": "Producer invocation succeeds and analytics object storage receives objects, but the inventory data store remains empty. The inventory queue depth stays at zero. No errors appear in any logs.",
+  "root_cause": "InventorySubscription.FilterPolicy is keyed on eventSource instead of eventType. The anti-corruption handler publishes a MessageAttribute named eventType (not eventSource), so the SNS filter evaluates the subscription against an attribute that is never published. Since no message has an eventSource MessageAttribute, every message fails the filter and zero messages are delivered to InventoryJobEventsQueue.",
+  "corpus_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3",
+  "functional_test_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/functional_test.py",
+  "known_good_path": "corpus/arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/known_good.yaml"
+}
