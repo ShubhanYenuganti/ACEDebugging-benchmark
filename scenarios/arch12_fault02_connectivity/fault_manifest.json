@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch12_fault02",
+  "fault_class": "connectivity",
+  "architecture": "arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
+  "scenario_id": "arch12_fault02_connectivity",
+  "target_resource": "CSVProcessingToSQSFunction",
+  "target_property": "Properties.Environment.Variables.SQS_QUEUE_URL",
+  "injected_value": "!Sub 'https://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/${AWS::StackName}-inventory-queue-v2'",
+  "original_value": "!Ref InventoryUpdatesQueue",
+  "valid_fixes": [
+    "Restore CSVProcessingToSQSFunction.Properties.Environment.Variables.SQS_QUEUE_URL to !Ref InventoryUpdatesQueue"
+  ],
+  "invalid_patches": [
+    "Creating a new queue named inventory-queue-v2 to match the hardcoded URL instead of correcting the env var"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": [
+    "ace_check_queue_depth(queue=InventoryUpdatesQueue) → visible=0, in_flight=0 — queue never received messages",
+    "ace_get_log_tail(function=SQSToDynamoDBFunction) → no invocations at all",
+    "ace_get_log_tail(function=CSVProcessingToSQSFunction) → parser was invoked but shows QueueDoesNotExist error on send_message_batch",
+    "ace_get_environment_variables(function=CSVProcessingToSQSFunction) → SQS_QUEUE_URL contains inventory-queue-v2 instead of inventory-queue"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "inventory_records_written and queue_drained_terminal_state",
+  "observable_symptom": "Parser was invoked and ran, but no messages reached the work queue; consumer was never triggered; parser logs show a queue-not-found error on send",
+  "root_cause": "SQS_QUEUE_URL environment variable is set to a hardcoded URL referencing a non-existent queue (inventory-queue-v2 suffix). The parser's send_message_batch call fails with QueueDoesNotExist. The real queue's event source mapping is healthy but never receives messages because the parser sends to the wrong endpoint.",
+  "corpus_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
+  "functional_test_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/functional_test.py",
+  "known_good_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/known_good.yaml"
+}
