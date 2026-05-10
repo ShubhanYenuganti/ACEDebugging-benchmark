@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Standalone CloudFormation translation of the S3 CSV to SQS to Lambda to DynamoDB inventory sample.
+
+Resources:
+  InventoryUpdatesBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: CSVInvokePermission
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-inventory-updates'
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt CSVProcessingToSQSFunction.Arn
+
+  InventoryUpdatesDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-inventory-dlq'
+      VisibilityTimeout: 300
+
+  InventoryUpdatesQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-inventory-queue'
+      VisibilityTimeout: 300
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InventoryUpdatesDlq.Arn
+        maxReceiveCount: 5
+
+  InventoryUpdatesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-inventory-updates'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  InventoryFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: inventory-functions-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${AWS::StackName}-inventory-updates/*'
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt InventoryUpdatesQueue.Arn
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt InventoryUpdatesTable.Arn
+
+  CSVProcessingToSQSFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-csv-to-sqs'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt InventoryFunctionRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Ref InventoryUpdatesQueue
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: csv-to-sqs.zip
+
+  SQSToDynamoDBFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-sqs-to-dynamodb'
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Role: !GetAtt InventoryFunctionRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref InventoryUpdatesTable
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: sqs-to-dynamodb.zip
+
+  CSVInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CSVProcessingToSQSFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub 'arn:aws:s3:::${AWS::StackName}-inventory-updates'
+
+  QueueEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1 # FAULT INJECTION
+      EventSourceArn: !GetAtt InventoryUpdatesQueue.Arn
+      FunctionName: !Ref SQSToDynamoDBFunction
+      FilterCriteria: # FAULT INJECTION
+        Filters: # FAULT INJECTION
+          - Pattern: '{"body":{"warehouse":["A"]}}' # FAULT INJECTION
+
+Outputs:
+  InventoryUpdatesBucketName:
+    Value: !Ref InventoryUpdatesBucket
+  InventoryUpdatesQueueUrl:
+    Value: !Ref InventoryUpdatesQueue
+  InventoryUpdatesQueueArn:
+    Value: !GetAtt InventoryUpdatesQueue.Arn
+  InventoryUpdatesTableName:
+    Value: !Ref InventoryUpdatesTable
+  CSVProcessingFunctionName:
+    Value: !Ref CSVProcessingToSQSFunction
+  SQSToDynamoDBFunctionName:
+    Value: !Ref SQSToDynamoDBFunction
