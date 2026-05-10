@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch12_fault07",
+  "fault_class": "data_correctness",
+  "architecture": "arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
+  "scenario_id": "arch12_fault07_data_correctness",
+  "target_resource": "SQSToDynamoDBFunction",
+  "target_property": "deployment/lambda/sqs-to-dynamodb.py:body[\"quantity\"]",
+  "injected_value": "body[\"qty\"]",
+  "original_value": "body[\"quantity\"]",
+  "valid_fixes": [
+    "Change body[\"qty\"] back to body[\"quantity\"] in sqs-to-dynamodb.py so the key matches the field name sent by the CSV parser"
+  ],
+  "invalid_patches": [
+    "Change the CSV parser to emit 'qty' instead of 'quantity' — fixes the KeyError but breaks any downstream schema contract expecting 'quantity'",
+    "Add a try/except around body[\"qty\"] to silently skip failed rows — swallows the error without writing records"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": [
+    "ace_get_log_tail(function=SQSToDynamoDBFunction) → repeated KeyError: 'qty' on every invocation",
+    "ace_check_queue_depth(queue=InventoryUpdatesQueue) → messages accumulating, consumer failing",
+    "ace_check_queue_depth(queue=InventoryUpdatesDlq) → messages appearing after maxReceiveCount exhausted — confirms consumer-side failure"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertions 'inventory_records_written' and 'queue_drained_terminal_state' fail",
+  "observable_symptom": "The parser runs successfully and messages appear in the work queue. The consumer function is invoked but every invocation throws an unhandled KeyError. Messages exhaust retries and accumulate in the dead-letter queue. No records are written to the database.",
+  "root_cause": "The consumer handler references body[\"qty\"] when extracting the quantity field, but the CSV parser serializes the field as body[\"quantity\"]. Every invocation raises KeyError: 'qty', causing all messages to fail and route to the DLQ after maxReceiveCount retries.",
+  "corpus_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
+  "functional_test_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/functional_test.py",
+  "known_good_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/known_good.yaml"
+}
