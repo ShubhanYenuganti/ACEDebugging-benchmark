@@ -1,0 +1,30 @@
+{
+  "fault_id": "arch01_fault06",
+  "fault_class": "security",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault06_security",
+  "target_resource": "StreamHandlerRole",
+  "target_property": "Policies[0].PolicyDocument.Statement[1].Resource",
+  "injected_value": "!GetAtt FriendTable.Arn",
+  "original_value": "!GetAtt FriendTable.StreamArn",
+  "valid_fixes": [
+    "Restore StreamHandlerRole stream read policy Resource to !GetAtt FriendTable.StreamArn",
+    "Restore RequestStateMapping MaximumRetryAttempts to 1"
+  ],
+  "invalid_patches": [
+    "Granting dynamodb:* on * to work around the scope",
+    "Attaching AdministratorAccess to the role"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": "Invoke a friend request; observe no pending record created; check StreamHandlerRole IAM policy; observe DescribeStream/GetRecords/GetShardIterator/ListStreams Resource scoped to table ARN instead of stream ARN; Lambda cannot poll the stream.",
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'pending_record_created' fails; RequestStateHandlerFunction shows AccessDeniedException in CloudWatch logs",
+  "observable_symptom": "Friend requests are written to the database but no reciprocal pending record is ever created for the recipient. The request-state stream handler silently receives no events because its execution role lacks permission to read the DynamoDB stream.",
+  "root_cause": "StreamHandlerRole grants stream-read actions (DescribeStream, GetRecords, GetShardIterator, ListStreams) against the table ARN instead of the stream ARN. DynamoDB stream polling fails with AccessDeniedException, so no INSERT events are delivered to the handler. MaximumRetryAttempts is also set to 0, discarding any events that do reach the mapping.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}

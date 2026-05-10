@@ -1,0 +1,30 @@
+{
+  "fault_id": "arch01_fault05",
+  "fault_class": "performance",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault05_performance",
+  "target_resource": "FrontQueue",
+  "target_property": "Properties.VisibilityTimeout",
+  "injected_value": 30,
+  "original_value": 120,
+  "valid_fixes": [
+    "Set FrontQueue VisibilityTimeout to 120 to match Lambda timeout",
+    "Set FrontQueue VisibilityTimeout to any value >= Lambda Timeout (120)"
+  ],
+  "invalid_patches": [
+    "Reducing Lambda Timeout to match reduced VisibilityTimeout",
+    "Adding a DLQ without fixing VisibilityTimeout"
+  ],
+  "optimal_tool_calls": 2,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": "Check SQS queue configuration to observe VisibilityTimeout (30) is less than FrontHandlerFunction Timeout (120); restore VisibilityTimeout to 120.",
+  "concurrency_probe_n": 3,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "Messages are delivered to the front-handler Lambda multiple times; duplicate DynamoDB writes observed under load",
+  "observable_symptom": "Under load, friend-action messages are processed more than once per message; idempotency guards fire and suppress duplicates, but throughput is degraded and CloudWatch shows multiple concurrent invocations per message ID.",
+  "root_cause": "SQS VisibilityTimeout (30 s) is shorter than the Lambda function timeout (120 s). Messages become visible again while still being processed, triggering concurrent duplicate invocations.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}

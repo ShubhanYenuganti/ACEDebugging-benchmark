@@ -1,0 +1,30 @@
+{
+  "fault_id": "arch01_fault08",
+  "fault_class": "connectivity",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault08_connectivity",
+  "target_resource": "ReadApiStage",
+  "target_property": "Properties.StageName",
+  "injected_value": "v1",
+  "original_value": "prod",
+  "valid_fixes": [
+    "Restore ReadApiStage StageName to 'prod'",
+    "Restore ReadApiPermission SourceArn to use wildcard stage /*/ instead of /prod/"
+  ],
+  "invalid_patches": [
+    "Changing the ApiUrl output to reference the v1 stage",
+    "Adding a second stage named prod"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": "Invoke a GET on the read API; receive 403 Forbidden; check API Gateway stage and Lambda permission SourceArn; observe stage is 'v1' but permission only grants execution for 'prod'; fix StageName to 'prod' and SourceArn to wildcard.",
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "All read API calls return HTTP 403; Lambda invocation logs absent",
+  "observable_symptom": "All GET requests to /friends/{playerId} and /friends/isFriend/{playerId}/{friendId} return 403 Forbidden. Write operations via SQS proceed normally. The API stage exists but API Gateway cannot invoke the Lambda due to a permission mismatch.",
+  "root_cause": "ReadApiStage deploys at stage name 'v1' but ReadApiPermission grants invoke permission only for stage 'prod' (SourceArn includes /prod/ literal instead of */). API Gateway cannot invoke the Lambda function for the deployed stage, returning 403.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}

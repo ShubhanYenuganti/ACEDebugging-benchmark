@@ -1,0 +1,29 @@
+{
+  "fault_id": "arch01_fault10",
+  "fault_class": "data_correctness",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault10_data_correctness",
+  "target_resource": "FrontHandlerFunction",
+  "target_property": "Properties.Environment.Variables.FRIEND_TABLE",
+  "injected_value": "!Ref FrontQueue",
+  "original_value": "!Ref FriendTable",
+  "valid_fixes": [
+    "Restore FrontHandlerFunction Environment Variable FRIEND_TABLE to !Ref FriendTable"
+  ],
+  "invalid_patches": [
+    "Hardcoding the DynamoDB table name as a string",
+    "Changing the Lambda code to read the table name from SSM Parameter Store"
+  ],
+  "optimal_tool_calls": 2,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": "Send a friend request; observe no DynamoDB record written; invoke Lambda directly; observe boto3 DynamoDB client error using a queue URL as table name; check FrontHandlerFunction environment variables; observe FRIEND_TABLE resolves to queue URL instead of table name.",
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'request_record_created' fails; FrontHandlerFunction CloudWatch logs show ResourceNotFoundException from DynamoDB",
+  "observable_symptom": "All friend actions (Request, Accept, Reject, Unfriend) silently fail. No records are written to or removed from the database. The front-handler Lambda raises an exception on every message, causing the SQS batch to fail and messages to be requeued indefinitely.",
+  "root_cause": "FrontHandlerFunction FRIEND_TABLE environment variable references !Ref FrontQueue, which resolves to the SQS queue URL. boto3 DynamoDB Table() is initialized with a queue URL instead of a table name, causing every DynamoDB call to fail with ResourceNotFoundException.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}

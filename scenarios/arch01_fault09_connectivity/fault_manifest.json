@@ -1,0 +1,30 @@
+{
+  "fault_id": "arch01_fault09",
+  "fault_class": "connectivity",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault09_connectivity",
+  "target_resource": "RequestStateMapping",
+  "target_property": "FilterCriteria.Filters[0].Pattern.eventName",
+  "injected_value": "MODIFY",
+  "original_value": "INSERT",
+  "valid_fixes": [
+    "Restore RequestStateMapping filter eventName to INSERT",
+    "Restore AcceptStateMapping filter to MODIFY with NewImage.state=Friends and OldImage.state=Pending"
+  ],
+  "invalid_patches": [
+    "Removing all FilterCriteria (causes each handler to process all events)",
+    "Swapping handler function references instead of filter patterns"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": "Send a friend request; observe no pending record for recipient; check RequestStateMapping FilterCriteria; observe eventName=MODIFY (initial row write is INSERT); check AcceptStateMapping FilterCriteria; observe INSERT/Requested (accept event is MODIFY/Friends); correct both patterns.",
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'pending_record_created' fails; functional_test assertion 'accept_creates_friends_state' fails",
+  "observable_symptom": "Friend requests are stored but recipients never see a Pending record. Accepting a friendship has no effect. The stream-driven state handlers are wired with swapped event-type filters, so each handler listens for the wrong DynamoDB event type.",
+  "root_cause": "RequestStateMapping filter specifies eventName=MODIFY but new friend requests produce INSERT events — the handler never fires. AcceptStateMapping filter specifies eventName=INSERT with state=Requested instead of MODIFY with NewImage.state=Friends and OldImage.state=Pending — accepts are never delivered to the accept handler.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}

@@ -1,0 +1,416 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Standalone CloudFormation translation of the LocalStack friend microservices
+  sample. Models SQS command ingress, Lambda handlers, DynamoDB stream-driven
+  reciprocal state transitions, and API Gateway read endpoints.
+
+Resources:
+  FriendTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-friend'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: player_id
+          AttributeType: S
+        - AttributeName: friend_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: player_id
+          KeyType: HASH
+        - AttributeName: friend_id
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  FrontQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-front-queue'
+      VisibilityTimeout: 120
+
+  StateHandleDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AWS::StackName}-state-handler-dlq'
+
+  FrontHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: front-handler-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt FrontQueue.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt FriendTable.Arn
+
+  StreamHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: stream-handler-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource: !GetAtt FriendTable.StreamArn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt FriendTable.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt StateHandleDLQ.Arn
+
+  ReadHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: read-handler-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource: !GetAtt FriendTable.Arn
+
+  FrontHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-front-handler'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt FrontHandlerRole.Arn
+      Timeout: 120
+      Environment:
+        Variables:
+          FRIEND_TABLE: !Ref FriendTable
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: front-handler.zip
+
+  RequestStateHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-request-state-handler'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt StreamHandlerRole.Arn
+      Timeout: 120
+      Environment:
+        Variables:
+          FRIEND_TABLE: !Ref FriendTable
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: request-state-handler.zip
+
+  AcceptStateHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-accept-state-handler'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt StreamHandlerRole.Arn
+      Timeout: 120
+      Environment:
+        Variables:
+          FRIEND_TABLE: !Ref FriendTable
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: accept-state-handler.zip
+
+  RejectStateHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-reject-state-handler'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt StreamHandlerRole.Arn
+      Timeout: 120
+      Environment:
+        Variables:
+          FRIEND_TABLE: !Ref FriendTable
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: reject-state-handler.zip
+
+  UnfriendStateHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-unfriend-state-handler'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt StreamHandlerRole.Arn
+      Timeout: 120
+      Environment:
+        Variables:
+          FRIEND_TABLE: !Ref FriendTable
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: unfriend-state-handler.zip
+
+  ReadHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-read-handler'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt ReadHandlerRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          FRIEND_TABLE: !Ref FriendTable
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: read-handler.zip
+
+  FrontQueueMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 5
+      EventSourceArn: !GetAtt FrontQueue.Arn
+      FunctionName: !Ref FrontHandlerFunction
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  RequestStateMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 5
+      StartingPosition: LATEST
+      EventSourceArn: !GetAtt FriendTable.StreamArn
+      FunctionName: !Ref RequestStateHandlerFunction
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      MaximumRetryAttempts: 1
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt StateHandleDLQ.Arn
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"state":{"S":["Requested"]}}}}'
+
+  AcceptStateMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 5
+      StartingPosition: LATEST
+      EventSourceArn: !GetAtt FriendTable.StreamArn
+      FunctionName: !Ref AcceptStateHandlerFunction
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      MaximumRetryAttempts: 1
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt StateHandleDLQ.Arn
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["MODIFY"],"dynamodb":{"NewImage":{"state":{"S":["Friends"]}},"OldImage":{"state":{"S":["Pending"]}}}}'
+
+  RejectStateMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 5
+      StartingPosition: LATEST
+      EventSourceArn: !GetAtt FriendTable.StreamArn
+      FunctionName: !Ref RejectStateHandlerFunction
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      MaximumRetryAttempts: 1
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt StateHandleDLQ.Arn
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["REMOVE"],"dynamodb":{"OldImage":{"state":{"S":["Pending"]}}}}'
+
+  UnfriendStateMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 5
+      StartingPosition: LATEST
+      EventSourceArn: !GetAtt FriendTable.StreamArn
+      FunctionName: !Ref UnfriendStateHandlerFunction
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      MaximumRetryAttempts: 1
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt StateHandleDLQ.Arn
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["REMOVE"],"dynamodb":{"OldImage":{"state":{"S":["Friends"]}}}}'
+
+  ReadApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${AWS::StackName}-friend-read-api'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  FriendsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ReadApi
+      ParentId: !GetAtt ReadApi.RootResourceId
+      PathPart: friends
+
+  PlayerResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ReadApi
+      ParentId: !Ref FriendsResource
+      PathPart: '{playerId}'
+
+  IsFriendResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ReadApi
+      ParentId: !Ref FriendsResource
+      PathPart: isFriend
+
+  IsFriendPlayerResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ReadApi
+      ParentId: !Ref IsFriendResource
+      PathPart: '{playerId}'
+
+  IsFriendFriendResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ReadApi
+      ParentId: !Ref IsFriendPlayerResource
+      PathPart: '{friendId}'
+
+  ReadPlayerMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ReadApi
+      ResourceId: !Ref PlayerResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FunctionArn}/invocations
+          - FunctionArn: !GetAtt ReadHandlerFunction.Arn
+
+  ReadIsFriendMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ReadApi
+      ResourceId: !Ref IsFriendFriendResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FunctionArn}/invocations
+          - FunctionArn: !GetAtt ReadHandlerFunction.Arn
+
+  ReadApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ReadHandlerFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ReadApi}/prod/GET/*' # FAULT INJECTION
+
+  ReadApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ReadPlayerMethod
+      - ReadIsFriendMethod
+    Properties:
+      RestApiId: !Ref ReadApi
+
+  ReadApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref ReadApi
+      DeploymentId: !Ref ReadApiDeployment
+      StageName: v1 # FAULT INJECTION
+
+Outputs:
+  QueueUrl:
+    Value: !Ref FrontQueue
+  QueueArn:
+    Value: !GetAtt FrontQueue.Arn
+  TableName:
+    Value: !Ref FriendTable
+  TableStreamArn:
+    Value: !GetAtt FriendTable.StreamArn
+  ApiId:
+    Value: !Ref ReadApi
+  ApiUrl:
+    Value: !Sub 'http://${ReadApi}.execute-api.localhost.localstack.cloud:4566/prod'
+  FrontHandlerFunctionName:
+    Value: !Ref FrontHandlerFunction
+  RequestStateHandlerFunctionName:
+    Value: !Ref RequestStateHandlerFunction
+  AcceptStateHandlerFunctionName:
+    Value: !Ref AcceptStateHandlerFunction

@@ -1,0 +1,35 @@
+{
+  "fault_id": "arch01_fault02",
+  "fault_class": "data_correctness",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault02_data_correctness",
+  "target_resource": "RequestStateHandlerFunction",
+  "target_property": "deployment/lambda/request-state-handler/index.py#_create_pending.Item.friend_id",
+  "injected_value": "receiver_id",
+  "original_value": "requester_id",
+  "valid_fixes": [
+    "In request-state-handler/index.py _create_pending, change Item friend_id value from receiver_id to requester_id so the Pending record is keyed at (receiver_id, requester_id)",
+    "In read-handler/index.py handler, align the KeyConditionExpression placeholder and ExpressionAttributeValues key — both must use the same placeholder name (e.g. :player_id in both)"
+  ],
+  "invalid_patches": [
+    "Fix only request-state-handler without fixing read-handler — pending record is correct but read API still returns ValidationException",
+    "Fix only read-handler without fixing request-state-handler — read API works but pending record is at wrong key so accept flow fails"
+  ],
+  "optimal_tool_calls": 4,
+  "optimal_files_changed": 2,
+  "optimal_lines_changed": 3,
+  "optimal_diagnostic_path": [
+    "ace_get_log_tail(function=RequestStateHandlerFunction) → shows handler invoked successfully with no errors, but pending record written at unexpected key",
+    "ace_read_table_item(table=FriendTable, key={player_id: friend_id, friend_id: friend_id}) → reveals self-referential Pending record exists at wrong key",
+    "ace_invoke_lambda(function=ReadHandlerFunction, payload={pathParameters:{playerId:...}}) → returns ValidationException: Value provided in ExpressionAttributeValues unused in expressions",
+    "ace_get_log_tail(function=ReadHandlerFunction) → confirms ValidationException on every query due to placeholder mismatch"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "pending_record_created",
+  "observable_symptom": "The receiver-side Pending record is never found at the expected (friend_id, player_id) key. A self-referential record exists at (friend_id, friend_id). The read API returns a ValidationException error on every query. pending_record_created, accept_terminal_state, and read_api_terminal_state all fail.",
+  "root_cause": "In request-state-handler/index.py, _create_pending writes Item with friend_id set to receiver_id instead of requester_id, producing a self-referential record at (receiver_id, receiver_id). In read-handler/index.py, the query uses placeholder :pid in KeyConditionExpression but defines :player_id in ExpressionAttributeValues — the mismatch causes DynamoDB to return ValidationException on every query.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}

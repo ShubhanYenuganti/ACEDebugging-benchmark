@@ -1,0 +1,34 @@
+{
+  "fault_id": "arch01_fault04",
+  "fault_class": "data_correctness",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault04_data_correctness",
+  "target_resource": "AcceptStateMapping",
+  "target_property": "Properties.FilterCriteria.Filters[0].Pattern",
+  "injected_value": "{\"eventName\":[\"MODIFY\"],\"dynamodb\":{\"NewImage\":{\"state\":{\"S\":[\"Friends\"]}}}}",
+  "original_value": "{\"eventName\":[\"MODIFY\"],\"dynamodb\":{\"NewImage\":{\"state\":{\"S\":[\"Friends\"]}},\"OldImage\":{\"state\":{\"S\":[\"Pending\"]}}}}",
+  "valid_fixes": [
+    "Restore AcceptStateMapping filter pattern to include OldImage.state=Pending clause AND fix accept-state-handler to call _accept_reverse with correct argument order (_s(image, 'player_id'), _s(image, 'friend_id'))"
+  ],
+  "invalid_patches": [
+    "Restore filter pattern only without fixing swapped arguments — handler still updates wrong record",
+    "Fix swapped arguments only without restoring filter — handler may be invoked on unintended events causing duplicate updates"
+  ],
+  "optimal_tool_calls": 4,
+  "optimal_files_changed": 2,
+  "optimal_lines_changed": 3,
+  "optimal_diagnostic_path": [
+    "ace_read_table_item(player_id=friend_id, friend_id=player_id) → shows Friends; ace_read_table_item(player_id=player_id, friend_id=friend_id) → shows Requested, confirming requester-side not updated",
+    "ace_get_log_tail(FunctionName=<stack>-accept-state-handler) → invocations appear, no errors logged",
+    "ace_describe_resource(ResourceType=AWS::Lambda::EventSourceMapping, LogicalId=AcceptStateMapping) → filter pattern lacks OldImage clause",
+    "ace_invoke_lambda(FunctionName=<stack>-accept-state-handler, Payload=synthetic MODIFY record) → reveals handler calls update on receiver-side key (wrong key) due to swapped args"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'accept_terminal_state' fails",
+  "observable_symptom": "After accept, the receiver-side record transitions to Friends. The requester-side record remains in Requested. AcceptStateHandlerFunction logs show successful invocations — the handler ran, attempted a conditional update on the wrong record, silently caught ConditionalCheckFailedException, and returned success.",
+  "root_cause": "Two coupled faults: (1) AcceptStateMapping filter pattern lacks the OldImage.state=Pending clause, making it trigger on any MODIFY that sets state=Friends rather than only Pending->Friends transitions; (2) accept-state-handler calls _accept_reverse with swapped arguments (_s(image, 'friend_id'), _s(image, 'player_id')) instead of (_s(image, 'player_id'), _s(image, 'friend_id')), causing it to attempt updating the receiver-side record (already Friends) instead of the requester-side record (Requested). The conditional update fails silently with ConditionalCheckFailedException.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}

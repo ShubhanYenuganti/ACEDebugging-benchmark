@@ -1,0 +1,30 @@
+{
+  "fault_id": "arch01_fault07",
+  "fault_class": "connectivity",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault07_connectivity",
+  "target_resource": "FrontQueueMapping",
+  "target_property": "Properties.FilterCriteria",
+  "injected_value": "{\"body\":{\"friend_action\":[\"Accept\",\"Reject\",\"Unfriend\"]}}",
+  "original_value": null,
+  "valid_fixes": [
+    "Remove the FilterCriteria block from FrontQueueMapping entirely",
+    "Update FilterCriteria to include 'Request' alongside Accept/Reject/Unfriend"
+  ],
+  "invalid_patches": [
+    "Adding a separate SQS queue for Request actions",
+    "Changing the front-handler to process only accept/reject/unfriend"
+  ],
+  "optimal_tool_calls": 2,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 4,
+  "optimal_diagnostic_path": "Send a friend request; observe no DynamoDB write; check FrontQueueMapping FilterCriteria; observe filter only passes Accept/Reject/Unfriend actions; Request messages are silently dropped by SQS before Lambda is invoked.",
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'request_record_created' fails; SQS ApproximateNumberOfMessagesNotVisible stays at 0 after sending a Request message",
+  "observable_symptom": "Friend request messages sent to the queue are never processed. Accept, Reject, and Unfriend actions work normally. No Lambda invocations appear in CloudWatch for Request-action messages; messages are silently discarded.",
+  "root_cause": "FrontQueueMapping has a FilterCriteria pattern that allows only friend_action values of Accept, Reject, or Unfriend. Messages with friend_action=Request never match and are silently dropped by SQS before reaching the Lambda function.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}

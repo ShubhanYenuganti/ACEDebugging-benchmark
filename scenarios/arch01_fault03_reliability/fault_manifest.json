@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch01_fault03",
+  "fault_class": "reliability",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault03_reliability",
+  "target_resource": "RequestStateHandlerFunction",
+  "target_property": "Properties.Environment.Variables.FRIEND_TABLE",
+  "injected_value": "friend-table",
+  "original_value": "!Ref FriendTable",
+  "valid_fixes": [
+    "Restore FRIEND_TABLE to !Ref FriendTable in the template AND restore the exception handler in request-state-handler/index.py to re-raise non-ConditionalCheckFailed errors"
+  ],
+  "invalid_patches": [
+    "Restore only FRIEND_TABLE env var without fixing the exception swallow — leaves a latent reliability defect where any future DynamoDB error is silently lost",
+    "Fix only the exception handler without correcting FRIEND_TABLE — causes Lambda errors and DLQ routing but the Pending record is still never written"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 2,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": [
+    "ace_get_log_tail(FunctionName=<stack>-request-state-handler) → invocations complete without error despite no Pending record written",
+    "ace_check_queue_depth(QueueUrl=<state-handler-dlq-url>) → depth 0, confirming no failures were routed to DLQ",
+    "ace_get_environment_variables(FunctionName=<stack>-request-state-handler) → FRIEND_TABLE=friend-table reveals wrong table reference"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'pending_record_created' fails",
+  "observable_symptom": "RequestStateHandlerFunction logs show successful invocations with no errors. The DLQ depth remains zero. The receiver-side Pending record never appears in the table despite the requester-side Requested record existing. The system presents no observable error signal at any layer.",
+  "root_cause": "FRIEND_TABLE env var is set to the hardcoded string 'friend-table' (a non-existent table) instead of the stack-namespaced table name. Every put_item call raises ResourceNotFoundException. The exception handler in _create_pending uses bare 'except ClientError: pass', swallowing all ClientError subclasses including ResourceNotFoundException. The handler returns batchItemFailures: [], Lambda marks the batch successful, and no error reaches the DLQ or CloudWatch error metrics.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}
