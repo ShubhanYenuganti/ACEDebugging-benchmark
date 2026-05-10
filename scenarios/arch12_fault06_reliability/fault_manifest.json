@@ -1,0 +1,35 @@
+{
+  "fault_id": "arch12_fault06",
+  "fault_class": "reliability",
+  "architecture": "arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
+  "scenario_id": "arch12_fault06_reliability",
+  "target_resource": "InventoryUpdatesDlq",
+  "target_property": "Properties.RedrivePolicy",
+  "injected_value": {"deadLetterTargetArn": "!GetAtt InventoryUpdatesQueue.Arn", "maxReceiveCount": 1},
+  "original_value": null,
+  "valid_fixes": [
+    "Remove the RedrivePolicy from InventoryUpdatesDlq entirely so the DLQ does not redirect messages back to the main queue",
+    "Restore SQSToDynamoDBFunction.Environment.Variables.DYNAMODB_TABLE_NAME to !Ref InventoryUpdatesTable to stop consumer failures that trigger the loop"
+  ],
+  "invalid_patches": [
+    "Set InventoryUpdatesDlq.RedrivePolicy.maxReceiveCount to a higher value — does not break the loop, only delays it",
+    "Fix only the DLQ circular redrive without fixing the wrong table name — consumer still fails, messages cycle indefinitely through main queue and DLQ"
+  ],
+  "optimal_tool_calls": 4,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 4,
+  "optimal_diagnostic_path": [
+    "ace_get_log_tail(function=SQSToDynamoDBFunction) → repeated ResourceNotFoundException for inventory-staging table — wrong table name in env var",
+    "ace_get_environment_variables(function=SQSToDynamoDBFunction) → DYNAMODB_TABLE_NAME=ace-bench-stack-inventory-staging does not match deployed table",
+    "ace_check_queue_depth(queue=InventoryUpdatesDlq) → DLQ shows messages transiently then drops to 0 — messages leaving DLQ without a consumer",
+    "ace_describe_resource(resource=InventoryUpdatesDlq) → DLQ has RedrivePolicy pointing back to main queue — confirms circular loop"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertions 'inventory_records_written' and 'queue_drained_terminal_state' fail",
+  "observable_symptom": "The consumer is invoked and logs show repeated ResourceNotFoundException for a non-existent table. Messages appear in the dead-letter queue after exhausting retries, then disappear and reappear in the main queue. Neither queue reaches a stable state. No records are written to the database.",
+  "root_cause": "Two faults combine: (1) DYNAMODB_TABLE_NAME points to a non-existent inventory-staging table, causing every consumer invocation to fail with ResourceNotFoundException; (2) InventoryUpdatesDlq is given a RedrivePolicy that routes messages back to InventoryUpdatesQueue with maxReceiveCount=1. After 5 failures on the main queue, messages move to the DLQ. After 1 receive on the DLQ (with no consumer), they cycle back to the main queue — creating an infinite bounce loop. Neither fault alone produces this pattern.",
+  "corpus_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
+  "functional_test_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/functional_test.py",
+  "known_good_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/known_good.yaml"
+}
