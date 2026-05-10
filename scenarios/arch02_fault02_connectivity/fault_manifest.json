@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch02_fault02",
+  "fault_class": "connectivity",
+  "architecture": "arch_02_fuzzy_movie_search",
+  "scenario_id": "arch02_fault02_connectivity",
+  "target_resource": "IngestFunction",
+  "target_property": "Environment.Variables.STREAM_NAME",
+  "injected_value": "${AWS::StackName}-ingest-data",
+  "original_value": "${IngestStream} (resolved via !Ref IngestStream)",
+  "valid_fixes": [
+    "Change IngestFunction Environment.Variables.STREAM_NAME from the hardcoded wrong name back to !Ref IngestStream so the ingest function addresses the existing stream"
+  ],
+  "invalid_patches": [
+    "Create a second Kinesis stream named '<stack>-ingest-data' to match the env var (creates a new resource rather than fixing the misconfiguration)",
+    "Rename IngestStream.Name to end in '-ingest-data' (changes the actual resource name, breaking all existing references)"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": [
+    "ace_invoke_lambda(IngestFunction, payload) → runtime error response; ace_get_log_tail(IngestFunction) → ResourceNotFoundException: Stream <stack>-ingest-data not found",
+    "ace_get_environment_variables(IngestFunction) → STREAM_NAME: <stack>-ingest-data; name does not match actual stream",
+    "ace_list_resources(AWS::Kinesis::Stream) → actual stream physical ID is <stack>-ingest-stream; mismatch confirmed"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "ingest_function_accepts_document fails immediately with 500",
+  "observable_symptom": "The ingest endpoint returns HTTP 500 immediately for every request. Logs show a resource-not-found error naming a stream that does not exist. The actual streaming infrastructure is deployed and healthy.",
+  "root_cause": "The ingest function's environment variable STREAM_NAME resolves to '<stack>-ingest-data', but the actual stream is named '<stack>-ingest-stream'. Every put_record call raises ResourceNotFoundException, causing the function to return a 500 runtime error.",
+  "corpus_path": "corpus/arch_02_fuzzy_movie_search",
+  "functional_test_path": "corpus/arch_02_fuzzy_movie_search/functional_test.py",
+  "known_good_path": "corpus/arch_02_fuzzy_movie_search/known_good.yaml"
+}

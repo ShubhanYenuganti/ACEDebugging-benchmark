@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch02_fault07",
+  "fault_class": "data_correctness",
+  "architecture": "arch_02_fuzzy_movie_search",
+  "scenario_id": "arch02_fault07_data_correctness",
+  "target_resource": "IngestFunction",
+  "target_property": "Properties.Environment.Variables",
+  "injected_value": {"KINESIS_STREAM_NAME": "!Ref IngestStream"},
+  "original_value": {"STREAM_NAME": "!Ref IngestStream"},
+  "valid_fixes": [
+    "Rename the env var key back from KINESIS_STREAM_NAME to STREAM_NAME in IngestFunction.Environment.Variables (template-only fix — handler already reads STREAM_NAME)"
+  ],
+  "invalid_patches": [
+    "Changing only the handler to read KINESIS_STREAM_NAME without ensuring the template supplies that key",
+    "Adding both STREAM_NAME and KINESIS_STREAM_NAME to the template — leaves non-canonical configuration"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": [
+    "ace_invoke_lambda(FunctionName=IngestFunction, Payload={movie document}) → Lambda error with errorType: KeyError, errorMessage: 'STREAM_NAME'",
+    "ace_get_environment_variables(FunctionName=IngestFunction) → shows {KINESIS_STREAM_NAME: '<stack>-ingest-stream'}, confirming STREAM_NAME is absent",
+    "Read deployment/lambda/ingest.py → handler reads os.environ['STREAM_NAME'], confirming the mismatch between template-supplied key and handler-expected key"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'ingest_function_accepts_document' fails, 'document_indexed_in_elasticsearch' fails, 'search_function_returns_document' fails",
+  "observable_symptom": "Submitting a movie record to the ingest endpoint returns a 500 error. The ingest function crashes with a KeyError on every invocation. The function's configured environment provides the data stream name under the key KINESIS_STREAM_NAME, but the handler reads os.environ['STREAM_NAME'] which is absent, causing an unhandled exception.",
+  "root_cause": "The IngestFunction environment variable is named KINESIS_STREAM_NAME in the template, but the ingest handler reads os.environ['STREAM_NAME']. The key name mismatch causes a Python KeyError on every invocation. The fix requires restoring the env var key to STREAM_NAME in the template so it matches what the handler expects.",
+  "corpus_path": "corpus/arch_02_fuzzy_movie_search",
+  "functional_test_path": "corpus/arch_02_fuzzy_movie_search/functional_test.py",
+  "known_good_path": "corpus/arch_02_fuzzy_movie_search/known_good.yaml"
+}

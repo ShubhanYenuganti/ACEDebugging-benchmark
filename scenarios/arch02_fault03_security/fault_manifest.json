@@ -1,0 +1,35 @@
+{
+  "fault_id": "arch02_fault03",
+  "fault_class": "security",
+  "architecture": "arch_02_fuzzy_movie_search",
+  "scenario_id": "arch02_fault03_security",
+  "target_resource": "FirehoseRole",
+  "target_property": "Properties.Policies[0].PolicyDocument.Statement[0].Action",
+  "injected_value": ["kinesis:DescribeStream", "kinesis:GetRecords", "kinesis:ListShards"],
+  "original_value": ["kinesis:DescribeStream", "kinesis:GetRecords", "kinesis:GetShardIterator", "kinesis:ListShards"],
+  "valid_fixes": [
+    "Add kinesis:GetShardIterator back to the FirehoseRole kinesis action list in the first Statement entry"
+  ],
+  "invalid_patches": [
+    "Adding kinesis:GetShardIterator to the Elasticsearch statement instead of the Kinesis statement",
+    "Granting kinesis:* wildcard instead of the specific required actions",
+    "Adding the action to LambdaRole instead of FirehoseRole"
+  ],
+  "optimal_tool_calls": 4,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": [
+    "ace_invoke_lambda(FunctionName=IngestFunction, Payload={movie document}) → 200 success, confirming ingest path works",
+    "ace_describe_firehose_stream(DeliveryStreamName=IngestFirehoseStream) → ACTIVE status, KinesisStreamAsSource, no obvious configuration error",
+    "ace_get_metric_statistics(Namespace=AWS/Firehose, MetricName=DeliveryToElasticsearch.Records, DeliveryStreamName=IngestFirehoseStream) → value 0, confirming Firehose delivers nothing to Elasticsearch",
+    "ace_get_iam_role(RoleName=FirehoseRole) → kinesis action list contains DescribeStream, GetRecords, ListShards but is missing GetShardIterator"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'document_indexed_in_elasticsearch' fails, 'search_function_returns_document' fails",
+  "observable_symptom": "The ingest endpoint accepts movie documents and returns 200. Records accumulate in the data stream (stream shows active status and incoming records). The streaming delivery pipeline reports active status with a Kinesis source, but no records are delivered to the search index — the delivery metric for records reaching the search index is zero for the entire observation window. Searching returns no results.",
+  "root_cause": "The FirehoseRole kinesis action list is missing kinesis:GetShardIterator. The Firehose delivery service calls GetShardIterator to obtain a shard cursor before calling GetRecords to read data. Without GetShardIterator permission, the internal polling loop cannot advance past the cursor step and silently delivers nothing to Elasticsearch.",
+  "corpus_path": "corpus/arch_02_fuzzy_movie_search",
+  "functional_test_path": "corpus/arch_02_fuzzy_movie_search/functional_test.py",
+  "known_good_path": "corpus/arch_02_fuzzy_movie_search/known_good.yaml"
+}

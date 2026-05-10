@@ -1,0 +1,35 @@
+{
+  "fault_id": "arch02_fault10",
+  "fault_class": "reliability",
+  "architecture": "arch_02_fuzzy_movie_search",
+  "scenario_id": "arch02_fault10_reliability",
+  "target_resource": "FirehoseRole",
+  "target_property": "Policies[0].PolicyDocument.Statement[0].Resource",
+  "injected_value": ["arn:aws:s3:::wrong-backup-bucket", "arn:aws:s3:::wrong-backup-bucket/*"],
+  "original_value": ["!GetAtt SkippedDocumentsBucket.Arn", "!Sub '${SkippedDocumentsBucket.Arn}/*'"],
+  "valid_fixes": [
+    "Change the FirehoseRole S3 Resource entries from arn:aws:s3:::wrong-backup-bucket and arn:aws:s3:::wrong-backup-bucket/* back to !GetAtt SkippedDocumentsBucket.Arn and !Sub '${SkippedDocumentsBucket.Arn}/*' in faulted.yaml"
+  ],
+  "invalid_patches": [
+    "Modifying handler code — the fault is in the IAM policy resource ARNs, not the Lambda functions",
+    "Creating a bucket named wrong-backup-bucket — the policy should reference the actual SkippedDocumentsBucket, not a new bucket",
+    "Changing the S3Configuration BucketARN in IngestFirehoseStream — the delivery stream config is correct, only the role permissions are wrong"
+  ],
+  "optimal_tool_calls": 4,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": [
+    "ace_invoke_lambda(FunctionName=IngestFunction, Payload={body: '{\"title\": \"test\"}'}) → returns 200",
+    "ace_describe_firehose_stream(DeliveryStreamName=<IngestFirehoseStream>) → S3Configuration.BucketARN points to correct SkippedDocumentsBucket",
+    "ace_get_iam_role(RoleName=<FirehoseRole>) → S3 Resource ARNs are arn:aws:s3:::wrong-backup-bucket and arn:aws:s3:::wrong-backup-bucket/* instead of the actual bucket ARN",
+    "Read faulted.yaml → FirehoseRole S3 Resource entries are hardcoded wrong ARNs instead of !GetAtt SkippedDocumentsBucket.Arn"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion skipped_documents_written_to_bucket fails when search engine delivery is blocked",
+  "observable_symptom": "Normal ingest and search work correctly. When the pipeline fails to deliver a document to the search engine and attempts to write the skipped record to the backup bucket, the write fails with AccessDenied. Skipped documents are lost. The pipeline component's delivery role has S3 permissions scoped to a non-existent bucket instead of the actual backup bucket.",
+  "root_cause": "FirehoseRole grants S3 write permissions for arn:aws:s3:::wrong-backup-bucket and arn:aws:s3:::wrong-backup-bucket/* instead of the actual SkippedDocumentsBucket. When Firehose tries to write skipped records to SkippedDocumentsBucket, the IAM policy does not cover that ARN and the write is denied, causing silent document loss.",
+  "corpus_path": "corpus/arch_02_fuzzy_movie_search",
+  "functional_test_path": "corpus/arch_02_fuzzy_movie_search/functional_test.py",
+  "known_good_path": "corpus/arch_02_fuzzy_movie_search/known_good.yaml"
+}

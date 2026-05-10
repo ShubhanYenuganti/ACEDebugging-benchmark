@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Standalone CloudFormation translation of the Fuzzy Movie Search Terraform
+  sample. Creates Lambda function URLs for ingest/search, Kinesis and Firehose
+  ingestion into Elasticsearch, and S3 buckets for website and skipped records.
+
+Resources:
+  IngestStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub '${AWS::StackName}-ingest-stream'
+      ShardCount: 1
+
+  SkippedDocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-ingest-skipped-docs'
+
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-movie-search-site'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${WebsiteBucket.Arn}/*'
+
+  MovieSearchDomain:
+    Type: AWS::Elasticsearch::Domain
+    Properties:
+      DomainName: !Sub '${AWS::StackName}-movie-search'
+      ElasticsearchVersion: '7.10'
+      ElasticsearchClusterConfig:
+        InstanceType: m4.large.elasticsearch
+        InstanceCount: 1
+        DedicatedMasterEnabled: false
+        ZoneAwarenessEnabled: false
+      EBSOptions:
+        EBSEnabled: true
+        VolumeType: gp2
+        VolumeSize: 10
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: lambda-search-ingest-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                Resource: !GetAtt IngestStream.Arn
+              - Effect: Allow
+                Action:
+                  - es:ESHttpGet
+                  - es:ESHttpPost
+                Resource:
+                  - !GetAtt MovieSearchDomain.DomainArn
+                  - !Sub '${MovieSearchDomain.DomainArn}/*'
+
+  FirehoseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: firehose-elasticsearch-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:DescribeStream
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:ListShards
+                Resource: !GetAtt IngestStream.Arn
+              - Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:GetBucketLocation
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                  - s3:PutObject
+                Resource:
+                  - !GetAtt SkippedDocumentsBucket.Arn
+                  - !Sub '${SkippedDocumentsBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - es:DescribeElasticsearchDomain
+                  - es:DescribeElasticsearchDomains
+                  - es:DescribeElasticsearchDomainConfig
+                  - es:ESHttpGet
+                  - es:ESHttpPost
+                  - es:ESHttpPut
+                Resource:
+                  - !GetAtt MovieSearchDomain.DomainArn
+                  - !Sub '${MovieSearchDomain.DomainArn}/*'
+
+  IngestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-ingest'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          STREAM_NAME: !Ref IngestStream
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: ingest.zip
+
+  SearchFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-search'
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          ELASTICSEARCH_ENDPOINT: localhost:9200
+          ELASTICSEARCH_INDEX: movies
+      Code:
+        S3Bucket: ace-bench-artifacts
+        S3Key: search.zip
+
+  IngestFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt IngestFunction.Arn
+
+  SearchFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt SearchFunction.Arn
+      Cors:
+        AllowCredentials: false
+        AllowHeaders:
+          - '*'
+        AllowMethods:
+          - '*'
+        AllowOrigins:
+          - '*'
+        ExposeHeaders:
+          - date
+          - keep-alive
+        MaxAge: 86400
+
+  IngestFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunctionUrl
+      FunctionName: !Ref IngestFunction
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
+  SearchFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunctionUrl
+      FunctionName: !Ref SearchFunction
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
+  IngestFirehoseStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: !Sub '${AWS::StackName}-ingest-firehose'
+      DeliveryStreamType: KinesisStreamAsSource
+      KinesisStreamSourceConfiguration:
+        KinesisStreamARN: !GetAtt IngestStream.Arn
+        RoleARN: !GetAtt FirehoseRole.Arn
+      ElasticsearchDestinationConfiguration:
+        DomainARN: !GetAtt MovieSearchDomain.DomainArn
+        IndexName: movies
+        RoleARN: !GetAtt FirehoseRole.Arn
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 1
+        S3Configuration:
+          BucketARN: !GetAtt SkippedDocumentsBucket.Arn
+          RoleARN: !GetAtt FirehoseRole.Arn
+
+Outputs:
+  IngestLambdaUrl:
+    Value: !GetAtt IngestFunctionUrl.FunctionUrl
+  SearchLambdaUrl:
+    Value: !GetAtt SearchFunctionUrl.FunctionUrl
+  ElasticsearchEndpoint:
+    Value: !GetAtt MovieSearchDomain.DomainEndpoint
+  ElasticsearchDomainArn:
+    Value: !GetAtt MovieSearchDomain.DomainArn
+  IngestStreamName:
+    Value: !Ref IngestStream
+  FirehoseStreamName:
+    Value: !Ref IngestFirehoseStream
+  WebsiteBucketName:
+    Value: !Ref WebsiteBucket
+  WebsiteEndpoint:
+    Value: !Sub 'http://${WebsiteBucket}.s3-website.localhost.localstack.cloud:4566'

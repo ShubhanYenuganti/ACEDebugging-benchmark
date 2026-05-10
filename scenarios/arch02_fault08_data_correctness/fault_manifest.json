@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch02_fault08",
+  "fault_class": "data_correctness",
+  "architecture": "arch_02_fuzzy_movie_search",
+  "scenario_id": "arch02_fault08_data_correctness",
+  "target_resource": "SearchFunction",
+  "target_property": "deployment/lambda/search/index.py:handler:result.get",
+  "injected_value": "result.get(\"results\", {}).get(\"hits\", [])",
+  "original_value": "result.get(\"hits\", {}).get(\"hits\", [])",
+  "valid_fixes": [
+    "Change result.get('results', {}).get('hits', []) to result.get('hits', {}).get('hits', []) in deployment/lambda/search/index.py"
+  ],
+  "invalid_patches": [
+    "Modifying the CloudFormation template — the fault is entirely in the handler logic, not configuration",
+    "Changing the Elasticsearch query structure instead of the response parsing"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": [
+    "ace_invoke_lambda(FunctionName=SearchFunction, Payload={queryStringParameters: {q: <known title>}}) → returns 200 with body '[]' despite documents being indexed",
+    "ace_get_stream_records or direct ES query confirms documents exist in movies index with correct data",
+    "Read deployment/lambda/search/index.py → line 45 shows result.get('results', {}).get('hits', []) — Elasticsearch returns {'hits': {'hits': [...]}} so the outer get('results') returns {} and hits are always empty"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'search_function_returns_document' fails",
+  "observable_symptom": "The ingest endpoint accepts documents and returns 200. Direct inspection of the search index confirms the movie document is present and indexed. The search endpoint returns 200 but always returns an empty JSON array, even for exact title matches on confirmed indexed documents. No errors appear in search function logs.",
+  "root_cause": "The search handler extracts hits from the Elasticsearch response using result.get('results', {}).get('hits', []) but Elasticsearch returns {'hits': {'hits': [...]}}. The outer key is 'hits' not 'results'. result.get('results', {}) returns an empty dict, so .get('hits', []) returns an empty list on every call, making the response always [].",
+  "corpus_path": "corpus/arch_02_fuzzy_movie_search",
+  "functional_test_path": "corpus/arch_02_fuzzy_movie_search/functional_test.py",
+  "known_good_path": "corpus/arch_02_fuzzy_movie_search/known_good.yaml"
+}

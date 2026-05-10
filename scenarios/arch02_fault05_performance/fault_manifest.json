@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch02_fault05",
+  "fault_class": "performance",
+  "architecture": "arch_02_fuzzy_movie_search",
+  "scenario_id": "arch02_fault05_performance",
+  "target_resource": "IngestFirehoseStream",
+  "target_property": "Properties.ElasticsearchDestinationConfiguration.BufferingHints",
+  "injected_value": {"IntervalInSeconds": 900, "SizeInMBs": 128},
+  "original_value": {"IntervalInSeconds": 60, "SizeInMBs": 1},
+  "valid_fixes": [
+    "Reduce IntervalInSeconds to 60 (or any value well below the 180-second test timeout) and SizeInMBs to 1 in IngestFirehoseStream.ElasticsearchDestinationConfiguration.BufferingHints"
+  ],
+  "invalid_patches": [
+    "Reducing only IntervalInSeconds without reducing SizeInMBs — with a single small document, the size threshold still won't be reached before the interval",
+    "Increasing the functional test timeout instead of fixing the delivery configuration"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": [
+    "ace_invoke_lambda(FunctionName=IngestFunction, Payload={movie document}) → 200 success, ingest path functional",
+    "ace_describe_firehose_stream(DeliveryStreamName=IngestFirehoseStream) → ACTIVE, source KinesisStreamAsSource, BufferingHints shows IntervalInSeconds=900 and SizeInMBs=128",
+    "ace_get_metric_statistics(Namespace=AWS/Firehose, MetricName=IncomingRecords, DeliveryStreamName=IngestFirehoseStream) → records entering Firehose but DeliveryToElasticsearch.Records remains 0, confirming records are buffered but not yet flushed"
+  ],
+  "concurrency_probe_n": 10,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'document_indexed_in_elasticsearch' fails, 'search_function_returns_document' fails",
+  "observable_symptom": "The ingest endpoint accepts documents and returns 200. Records enter the data stream. The delivery pipeline shows active status and records entering. However, no records reach the search index within the 3-minute test window. The buffering configuration requires either 128 MB or 900 seconds to elapse before flushing — both thresholds are unreachable within the test timeout for a single small document.",
+  "root_cause": "The Firehose stream's BufferingHints are set to IntervalInSeconds=900 and SizeInMBs=128. Firehose flushes when either threshold is met. A single test document is kilobytes in size (far below 128 MB), so the size threshold is never reached. The interval threshold requires 15 minutes, far exceeding the functional test's 180-second timeout. Records accumulate in Firehose's buffer and are never delivered to Elasticsearch within the test window.",
+  "corpus_path": "corpus/arch_02_fuzzy_movie_search",
+  "functional_test_path": "corpus/arch_02_fuzzy_movie_search/functional_test.py",
+  "known_good_path": "corpus/arch_02_fuzzy_movie_search/known_good.yaml"
+}

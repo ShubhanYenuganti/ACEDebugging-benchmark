@@ -1,0 +1,34 @@
+{
+  "fault_id": "arch02_fault01",
+  "fault_class": "data_correctness",
+  "architecture": "arch_02_fuzzy_movie_search",
+  "scenario_id": "arch02_fault01_data_correctness",
+  "target_resource": "IngestFirehoseStream",
+  "target_property": "ElasticsearchDestinationConfiguration.IndexName",
+  "injected_value": "movie_index",
+  "original_value": "movies",
+  "valid_fixes": [
+    "Change IngestFirehoseStream.ElasticsearchDestinationConfiguration.IndexName from 'movie_index' back to 'movies' so the streaming pipeline and search function target the same index"
+  ],
+  "invalid_patches": [
+    "Change SearchFunction ELASTICSEARCH_INDEX to 'movie_index' to match the Firehose destination (fixes routing but changes the intended index name)",
+    "Add a new Elasticsearch index alias mapping movie_index to movies (over-engineered, not a configuration fix)"
+  ],
+  "optimal_tool_calls": 4,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 2,
+  "optimal_diagnostic_path": [
+    "ace_invoke_lambda(IngestFunction, payload) → returns 200 accepted; ingest path appears healthy",
+    "ace_describe_firehose_stream(IngestFirehoseStream) → ACTIVE status, S3 backup ARN visible, but IndexName NOT exposed; misleadingly healthy",
+    "ace_get_environment_variables(SearchFunction) → ELASTICSEARCH_INDEX: movies",
+    "ace_describe_resource(IngestFirehoseStream) → raw CFN properties reveal IndexName: movie_index, which does not match ELASTICSEARCH_INDEX: movies; root cause identified"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "document_indexed_in_elasticsearch and search_function_returns_document both fail; ingest_function_accepts_document passes",
+  "observable_symptom": "Ingest endpoint returns 200 success, but after the full 180-second wait window, searching for the ingested movie returns zero results from both the direct search engine query and the search function endpoint.",
+  "root_cause": "The streaming pipeline's destination index is configured as 'movie_index' while the search function queries the 'movies' index. Documents are successfully delivered to 'movie_index' but the 'movies' index remains empty, causing all searches to return zero hits.",
+  "corpus_path": "corpus/arch_02_fuzzy_movie_search",
+  "functional_test_path": "corpus/arch_02_fuzzy_movie_search/functional_test.py",
+  "known_good_path": "corpus/arch_02_fuzzy_movie_search/known_good.yaml"
+}
