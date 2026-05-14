@@ -52,12 +52,15 @@ class ScenarioRunner:
         if not py_files or not s3_keys:
             return
 
+        py_by_stem = {os.path.splitext(os.path.basename(p))[0]: p for p in py_files}
+
         _ensure_artifact_bucket()
         for s3_key in s3_keys:
+            key_stem = os.path.splitext(os.path.basename(s3_key))[0]
+            py_path = py_by_stem.get(key_stem) or next(iter(py_by_stem.values()))
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for py_path in py_files:
-                    zf.write(py_path, arcname=os.path.basename(py_path))
+                zf.write(py_path, arcname="index.py")
             s3_client.put_object(
                 Bucket=_ARTIFACT_BUCKET, Key=s3_key, Body=buf.getvalue()
             )

@@ -62,7 +62,9 @@ async def run_agent_loop(
     scenario_dir: str,
     run_id: str,
     harness_api_key: str,
+    extra_headers: dict | None = None,
     max_turns: int = 50,
+    verbose: bool = False,
 ) -> bool:
     """Drive the model through the scenario. Returns True if submit_fix was called."""
     async with _start_mcp_session(harness_api_key) as session:
@@ -83,10 +85,17 @@ async def run_agent_loop(
                 kwargs["api_key"] = api_key
             if base_url:
                 kwargs["api_base"] = base_url
+            if extra_headers:
+                kwargs["extra_headers"] = extra_headers
 
             response = litellm.completion(**kwargs)
             msg = response.choices[0].message
             finish = response.choices[0].finish_reason
+
+            if verbose:
+                print(f"\n[turn {turn}]", flush=True)
+                if msg.content:
+                    print(msg.content, flush=True)
 
             messages.append({
                 "role": "assistant",
@@ -102,6 +111,8 @@ async def run_agent_loop(
             })
 
             if finish in ("stop", "end_turn") or not msg.tool_calls:
+                if verbose:
+                    print(f"[turn {turn}] model stopped (finish={finish})", flush=True)
                 break
 
             tool_results = []
@@ -111,6 +122,10 @@ async def run_agent_loop(
                     args = json.loads(tc.function.arguments or "{}")
                 except (json.JSONDecodeError, ValueError):
                     args = {}
+
+                if verbose:
+                    _args_preview = ", ".join(f"{k}={repr(v)[:60]}" for k, v in args.items())
+                    print(f"  → {name}({_args_preview})", flush=True)
 
                 if name in _FILE_TOOL_NAMES:
                     content = dispatch_file_tool(name, args, scenario_dir)

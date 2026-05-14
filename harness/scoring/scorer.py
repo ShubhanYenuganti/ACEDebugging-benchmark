@@ -1,5 +1,6 @@
 import json
 import pathlib
+from harness.scoring.agent import SCORING_MODEL
 from harness.scoring import gate
 from harness.scoring.dimensions import (
     identification,
@@ -30,7 +31,7 @@ def _write_zero(run_dir: pathlib.Path, run_id: str, scenario_id: str, reason: st
     result = {
         "run_id": run_id,
         "scenario_id": scenario_id,
-        "scored_by": "claude-sonnet-4-6",
+        "scored_by": SCORING_MODEL,
         "quality_threshold_met": quality_gate_met,
         "zero_reason": reason,
         "dimensions": {},
@@ -102,7 +103,7 @@ def score_run(run_id: str, base_dir: str) -> dict:
     result = {
         "run_id": run_id,
         "scenario_id": scenario_id,
-        "scored_by": "claude-sonnet-4-6",
+        "scored_by": SCORING_MODEL,
         "quality_threshold_met": True,
         "zero_reason": None,
         "dimensions": {

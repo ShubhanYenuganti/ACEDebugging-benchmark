@@ -1,7 +1,8 @@
-import anthropic
+import os
 
-client = anthropic.Anthropic()
-SCORING_MODEL = "claude-sonnet-4-6"
+import litellm
+
+SCORING_MODEL = os.environ.get("ACE_SCORING_MODEL", "gpt-4o")
 
 SYSTEM_PROMPT = """You are an infrastructure debugging benchmark scorer.
 You evaluate AI model runs against a known-good AWS architecture.
@@ -19,10 +20,12 @@ Rationale is exactly 1-2 sentences. Do not reference information not given in th
 
 
 def call_scoring_agent(system_prompt: str, user_prompt: str) -> str:
-    message = client.messages.create(
+    response = litellm.completion(
         model=SCORING_MODEL,
         max_tokens=1024,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
     )
-    return message.content[0].text.strip()
+    return response.choices[0].message.content.strip()

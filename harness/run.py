@@ -147,6 +147,32 @@ def _print_score_summary(score: dict) -> None:
     print()
 
 
+def _resolve_inference_config(
+    args: argparse.Namespace,
+) -> tuple[str | None, str | None, str | None, dict | None]:
+    """Return (model, api_key, base_url, extra_headers) for the active inference backend.
+
+    VPS mode activates when ACE_VPS_ENDPOINT is set or --base-url is passed.
+    Set ACE_VPS_AUTH_TOKEN for RunPod Secure Cloud pods (adds Authorization header).
+    Anthropic mode is the fallback (existing behaviour, unchanged).
+    """
+    vps_endpoint = os.environ.get("ACE_VPS_ENDPOINT", "").strip()
+    in_vps_mode = bool(vps_endpoint) or bool(args.base_url)
+
+    if in_vps_mode:
+        endpoint = vps_endpoint or args.base_url
+        model_name = os.environ.get("ACE_VPS_MODEL", "qwen2.5-coder:32b")
+        api_key = os.environ.get("ACE_VPS_API_KEY", "ollama")
+        model = args.model or f"ollama/{model_name}"
+        auth_token = os.environ.get("ACE_VPS_AUTH_TOKEN", "").strip()
+        extra_headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+        print(f"[inference] VPS mode → {endpoint}  model={model}"
+              + ("  (auth)" if extra_headers else ""))
+        return model, api_key, endpoint, extra_headers
+
+    return args.model, args.api_key, args.base_url, None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ACE-Bench evaluation harness")
     parser.add_argument("scenario_dir", help="Path to scenario directory")
@@ -181,6 +207,11 @@ def main() -> None:
             "Custom API base URL (e.g. http://localhost:11434 for Ollama, "
             "or a self-hosted OpenAI-compatible endpoint)."
         ),
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print the model's reasoning text and each tool call as it executes.",
     )
     args = parser.parse_args()
 
@@ -253,7 +284,9 @@ def main() -> None:
 
     _agent_error: BaseException | None = None
 
-    if args.model:
+    _model, _api_key, _base_url, _extra_headers = _resolve_inference_config(args)
+
+    if _model:
         _harness_key = os.environ.get("HARNESS_API_KEY", "")
         if not _harness_key:
             print("ERROR: HARNESS_API_KEY env var is required when --model is used", file=sys.stderr)
@@ -264,13 +297,15 @@ def main() -> None:
             try:
                 asyncio.run(
                     run_agent_loop(
-                        model=args.model,
-                        api_key=args.api_key,
-                        base_url=args.base_url,
+                        model=_model,
+                        api_key=_api_key,
+                        base_url=_base_url,
+                        extra_headers=_extra_headers,
                         context=ctx,
                         scenario_dir=scenario_dir,
                         run_id=run_id,
                         harness_api_key=_harness_key,
+                        verbose=args.verbose,
                     )
                 )
             except BaseException as exc:
