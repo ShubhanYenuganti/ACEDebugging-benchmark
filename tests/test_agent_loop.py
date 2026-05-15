@@ -606,3 +606,102 @@ def test_deploy_callback_refuses_submit_without_new_write(tmp_path):
 
     # deploy_callback only called once (second submit_fix without write was refused)
     assert deploy_callback.call_count == 1
+
+
+# ── Verbose / thinking block tests ───────────────────────────────────────────
+
+def test_verbose_prints_reasoning_text(tmp_path, capsys):
+    """[thinking] block printed when model returns text before tool call in verbose mode."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+
+    tool_call = _make_tool_call("tc0", "write_file",
+        {"path": "deployment/handler.py", "content": "# fix"})
+    submit_call = _make_tool_call("tc1", "submit_fix", {})
+
+    response_with_text = _make_litellm_response(
+        "tool_calls", tool_calls=[tool_call], content="I will fix the StreamViewType."
+    )
+    response_submit = _make_litellm_response("tool_calls", tool_calls=[submit_call])
+
+    # Build a fake streaming chunk that carries the text content
+    def _make_stream_chunk(content_text):
+        delta = MagicMock()
+        delta.content = content_text
+        choice = MagicMock()
+        choice.delta = delta
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        return chunk
+
+    text_chunk = _make_stream_chunk("I will fix the StreamViewType.")
+    empty_chunk = _make_stream_chunk(None)
+
+    with patch("harness.agent.loop.litellm.completion") as mock_llm, \
+         patch("harness.agent.loop.litellm.stream_chunk_builder") as mock_builder, \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        # Turn 0 (verbose): returns chunks with content; stream_chunk_builder assembles.
+        # Turn 1 (verbose): no content chunks; stream_chunk_builder assembles submit.
+        mock_llm.side_effect = [[text_chunk], [empty_chunk]]
+        mock_builder.side_effect = [response_with_text, response_submit]
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t_verbose1",
+            harness_api_key="hk",
+            max_turns=10,
+            verbose=True,
+        ))
+
+    captured = capsys.readouterr()
+    assert "[thinking]" in captured.out
+    assert "StreamViewType" in captured.out
+
+
+def test_non_verbose_no_reasoning_printed(tmp_path, capsys):
+    """No [thinking] block printed when verbose=False."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+
+    tool_call = _make_tool_call("tc0", "write_file",
+        {"path": "deployment/handler.py", "content": "# fix"})
+    submit_call = _make_tool_call("tc1", "submit_fix", {})
+
+    responses = [
+        _make_litellm_response("tool_calls", tool_calls=[tool_call],
+                               content="I will fix the StreamViewType."),
+        _make_litellm_response("tool_calls", tool_calls=[submit_call]),
+    ]
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t_verbose2",
+            harness_api_key="hk",
+            max_turns=10,
+            verbose=False,
+        ))
+
+    captured = capsys.readouterr()
+    assert "[thinking]" not in captured.out

@@ -191,17 +191,31 @@ async def run_agent_loop(
             if verbose:
                 kwargs["stream"] = True
                 chunks = []
+                reasoning_chunks = []
                 print(f"\n[turn {turn}]", flush=True)
                 for chunk in litellm.completion(**kwargs):
                     chunks.append(chunk)
                     delta = chunk.choices[0].delta
                     if getattr(delta, "content", None):
-                        print(delta.content, end="", flush=True)
+                        reasoning_chunks.append(delta.content)
+                if reasoning_chunks:
+                    text = "".join(reasoning_chunks).strip()
+                    if text:
+                        truncated = text[:500] + ("..." if len(text) > 500 else "")
+                        print(f"  [thinking] {truncated}", flush=True)
                 print(flush=True)
                 response = litellm.stream_chunk_builder(chunks, messages=messages)
             else:
                 response = litellm.completion(**kwargs)
             msg = response.choices[0].message
+            if verbose:
+                for block in getattr(msg, "thinking_blocks", []) or []:
+                    text = getattr(block, "thinking", None)
+                    if text:
+                        text_stripped = text.strip()
+                        truncated = text_stripped[:500] + ("..." if len(text_stripped) > 500 else "")
+                        print(f"  [thinking] {truncated}", flush=True)
+                        break  # print first block only
             finish = response.choices[0].finish_reason
 
             synthesized = False
