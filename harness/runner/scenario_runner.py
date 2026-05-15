@@ -3,6 +3,7 @@ import io
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import zipfile
@@ -33,7 +34,8 @@ def _parse_pytest_output(output: str) -> dict:
         else:
             short_error = ""
             for j in range(i + 1, min(i + 10, len(lines))):
-                err = lines[j].strip().lstrip("E").strip()
+                stripped = lines[j].strip()
+                err = stripped[1:].strip() if stripped.startswith("E ") else stripped
                 if err.startswith(("AssertionError", "KeyError", "ValueError", "TypeError")):
                     short_error = err
                     break
@@ -148,11 +150,11 @@ class ScenarioRunner:
     def run_functional_tests(self) -> dict:
         corpus_dir = corpus_dir_for_scenario(self.scenario_dir)
         functional_test = corpus_dir / "functional_test.py"
+        if not functional_test.exists():
+            raise FileNotFoundError(f"functional_test.py not found: {functional_test}")
         proc = subprocess.run(
-            [
-                "python", "-m", "pytest", str(functional_test),
-                "-v", "--tb=line", "--no-header", "-q",
-            ],
+            [sys.executable, "-m", "pytest", str(functional_test),
+             "-v", "--tb=line", "--no-header"],
             capture_output=True,
             text=True,
             timeout=120,

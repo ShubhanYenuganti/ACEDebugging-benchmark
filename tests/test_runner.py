@@ -1,10 +1,15 @@
 import json
 import os
+import threading
+import zipfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.exceptions import ClientError, WaiterError
 
 from harness.runner.context_builder import build_context, corpus_dir_for_scenario
+from harness.runner.scenario_runner import ScenarioRunner, _parse_pytest_output
 
 _FIXED_INSTRUCTION = (
     "A deployed instance of this system is running in your local environment. "
@@ -70,9 +75,6 @@ class TestContextBuilder:
         assert os.path.isabs(ctx["template_path"])
         assert os.path.isabs(ctx["deployment_dir"])
 
-
-import zipfile
-from unittest.mock import MagicMock
 
 from harness.runner.deployment_handler import handle_submission
 
@@ -176,8 +178,6 @@ class TestDeploymentHandler:
             },
         )
         mocker.patch("harness.runner.deployment_handler.log_file_change")
-        from botocore.exceptions import WaiterError
-
         mock_cf = MagicMock()
         mock_cf.update_stack.return_value = {}
         mock_waiter = MagicMock()
@@ -201,9 +201,6 @@ class TestDeploymentHandler:
         assert len(result["events"]) > 0
 
 
-from unittest.mock import patch
-from botocore.exceptions import ClientError
-from harness.runner.deployment_handler import handle_submission
 
 
 def test_handle_submission_returns_no_changes_on_no_updates_error(tmp_path):
@@ -230,8 +227,6 @@ def test_handle_submission_returns_no_changes_on_no_updates_error(tmp_path):
 
 
 import threading
-
-from harness.runner.scenario_runner import ScenarioRunner
 
 
 class TestScenarioRunner:
@@ -340,8 +335,6 @@ def test_corpus_dir_for_scenario_raises_on_bad_name(tmp_path):
         corpus_dir_for_scenario(bad, corpus_root=tmp_path / "corpus")
 
 
-from harness.runner.scenario_runner import ScenarioRunner, _parse_pytest_output
-
 def test_parse_pytest_output_all_passing():
     output = (
         "PASSED functional_test.py::test_friend_request\n"
@@ -372,12 +365,15 @@ def test_run_functional_tests_calls_subprocess(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
     runner = ScenarioRunner(str(tmp_path), "run-test")
+    corpus_dir = tmp_path / "corpus" / "arch_01_x"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / "functional_test.py").write_text("def test_x(): pass\n")
     mocker.patch(
         "harness.runner.scenario_runner.corpus_dir_for_scenario",
-        return_value=tmp_path / "corpus" / "arch_01_x",
+        return_value=corpus_dir,
     )
     mocker.patch(
-        "subprocess.run",
+        "harness.runner.scenario_runner.subprocess.run",
         return_value=MagicMock(
             returncode=0,
             stdout="PASSED functional_test.py::test_x\n1 passed in 0.5s\n",
