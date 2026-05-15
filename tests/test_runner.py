@@ -383,3 +383,42 @@ def test_run_functional_tests_calls_subprocess(tmp_path, mocker):
     result = runner.run_functional_tests()
     assert result["all_passed"] is True
     assert result["passed"][0]["name"] == "test_x"
+
+
+def test_attempt_redeployment_runs_when_already_submitted(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-xyz")
+    runner.submitted = True
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value={"outcome": "deploy_success"},
+    )
+    result = runner.attempt_redeployment()
+    assert result["success"] is True
+    assert runner.submitted is True  # unchanged
+
+def test_attempt_redeployment_never_sets_submitted_on_success(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-xyz")
+    runner.submitted = False
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value={"outcome": "deploy_success"},
+    )
+    result = runner.attempt_redeployment()
+    assert result["success"] is True
+    assert runner.submitted is False  # not touched
+
+def test_attempt_redeployment_returns_failure_dict(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-xyz")
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value={"outcome": "no_changes", "error": "no changes detected"},
+    )
+    result = runner.attempt_redeployment()
+    assert result["success"] is False
+    assert "no changes" in result["error"]

@@ -190,3 +190,12 @@ class ScenarioRunner:
             "error": result.get("error", outcome),
             "result": result,
         }
+
+    def attempt_redeployment(self) -> dict:
+        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot)
+        outcome = result.get("outcome", "unknown")
+        return {
+            "success": outcome == "deploy_success",
+            "error": result.get("error", outcome),
+            "result": result,
+        }
