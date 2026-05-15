@@ -161,6 +161,15 @@ test("ace_check_event_source: returns array", async () => {
   assert.ok(Array.isArray(result));
 });
 
+test("ace_check_event_source includes filter_criteria field", async () => {
+  const t = tool(probeTools, "ace_check_event_source");
+  const result = await t.handler({ function_name: FN });
+  assert.ok(Array.isArray(result));
+  for (const mapping of result) {
+    assert.ok("filter_criteria" in mapping, "each mapping must have filter_criteria key");
+  }
+});
+
 test("ace_check_s3_object: nonexistent bucket returns exists:false", async () => {
   const result = await tool(probeTools, "ace_check_s3_object").handler({
     bucket: "no-such-bucket-xyz123",

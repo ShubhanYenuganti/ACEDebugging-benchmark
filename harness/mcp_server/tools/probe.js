@@ -179,6 +179,7 @@ export const probeTools = [
           enabled: m.State === "Enabled",
           batch_size: m.BatchSize,
           state: m.State,
+          filter_criteria: m.FilterCriteria ?? null,
         }));
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "LAMBDA_ERROR" };
