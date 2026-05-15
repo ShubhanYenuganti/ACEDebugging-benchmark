@@ -197,6 +197,34 @@ class TestDeploymentHandler:
         assert len(result["events"]) > 0
 
 
+from unittest.mock import patch
+from botocore.exceptions import ClientError
+from harness.runner.deployment_handler import handle_submission
+
+
+def test_handle_submission_returns_no_changes_on_no_updates_error(tmp_path):
+    (tmp_path / "faulted.yaml").write_text(
+        "AWSTemplateFormatVersion: '2010-09-09'\nResources:\n  Dummy:\n    Type: AWS::CloudFormation::WaitConditionHandle\n"
+    )
+    err = ClientError(
+        {"Error": {"Code": "ValidationError", "Message": "No updates are to be performed."}},
+        "UpdateStack",
+    )
+    with patch("harness.runner.deployment_handler.cf_client") as mock_cf, \
+         patch("harness.runner.deployment_handler.snapshot", return_value={}), \
+         patch("harness.runner.deployment_handler.diff_snapshots", return_value={
+             "files_added": [], "files_modified": [], "files_removed": [],
+             "total_files_changed": 0, "per_file_line_changes": {}, "total_lines_changed": 0,
+         }), \
+         patch("harness.runner.deployment_handler.log_file_change"), \
+         patch("harness.runner.deployment_handler.run_lint", return_value={"passed": True, "fatal_errors": [], "warnings": []}):
+        mock_cf.update_stack.side_effect = err
+        result = handle_submission(str(tmp_path), "run-test", {})
+    assert result["outcome"] == "no_changes"
+    assert "error" in result
+    assert "No updates" in result["error"] or "no changes" in result["error"].lower()
+
+
 import threading
 
 from harness.runner.scenario_runner import ScenarioRunner

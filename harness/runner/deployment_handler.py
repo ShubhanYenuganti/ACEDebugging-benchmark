@@ -2,7 +2,7 @@ import io
 import os
 import zipfile
 
-from botocore.exceptions import WaiterError
+from botocore.exceptions import ClientError, WaiterError
 
 from harness.shared.cfn_lint_runner import run_lint
 from harness.shared.file_differ import diff_snapshots, snapshot
@@ -63,11 +63,25 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict) -> d
             template_body = template_body.replace("old-handler.zip", zip_key)
 
     # Step 4 — CloudFormation update
-    cf_client.update_stack(
-        StackName=_STACK_NAME,
-        TemplateBody=template_body,
-        Capabilities=["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"],
-    )
+    try:
+        cf_client.update_stack(
+            StackName=_STACK_NAME,
+            TemplateBody=template_body,
+            Capabilities=["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"],
+        )
+    except ClientError as e:
+        msg = str(e)
+        if "No updates are to be performed" in msg:
+            return {
+                "outcome": "no_changes",
+                "error": (
+                    "CloudFormation rejected the update: no changes detected in the template. "
+                    "Your file edit did not modify any CloudFormation resource properties. "
+                    "Check that you edited faulted.yaml (not just Lambda handler code) "
+                    "if the fault is in a resource configuration."
+                ),
+            }
+        raise
 
     try:
         waiter = cf_client.get_waiter("stack_update_complete")
