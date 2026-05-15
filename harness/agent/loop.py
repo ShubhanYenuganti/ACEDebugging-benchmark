@@ -148,6 +148,24 @@ def _build_system(context: dict) -> str:
     )
 
 
+def _format_test_summary(result: dict, attempt: int, max_retries: int) -> str:
+    n_passed = len(result.get("passed", []))
+    n_failed = len(result.get("failed", []))
+    lines = [f"Tests: {n_passed} passed, {n_failed} failed."]
+    for t in result.get("passed", []):
+        desc = f": {t['description']}" if t.get("description") else ""
+        lines.append(f"passed ({t['name']}{desc})")
+    for t in result.get("failed", []):
+        desc = f": {t['description']}" if t.get("description") else ""
+        err = f" — {t['short_error']}" if t.get("short_error") else ""
+        lines.append(f"failed ({t['name']}{desc}{err})")
+    lines.append(
+        f"Revise your fix with write_file and call submit_fix again. "
+        f"(Attempt {attempt} of {max_retries}.)"
+    )
+    return "\n".join(lines)
+
+
 async def run_agent_loop(
     model: str,
     api_key: str | None,
@@ -161,6 +179,9 @@ async def run_agent_loop(
     verbose: bool = False,
     deploy_callback=None,
     max_deploy_retries: int = 5,
+    redeploy_callback=None,
+    verify_callback=None,
+    max_test_retries: int = 5,
 ) -> bool:
     """Drive the model through the scenario. Returns True if submit_fix was called."""
     async with _start_mcp_session(harness_api_key) as session:
@@ -178,6 +199,8 @@ async def run_agent_loop(
         writes_made = 0
         retry_count = 0
         writes_since_last_submit = 0
+        all_tests_passed = verify_callback is None
+        test_retry_count = 0
 
         for turn in range(max_turns):
             kwargs: dict = dict(model=model, messages=messages, tools=tools, tool_choice="required")
@@ -287,16 +310,43 @@ async def run_agent_loop(
                                 dispatch_file_tool(name, args, scenario_dir)
                                 submitted = True
                                 content = "Fix submitted."
-                            elif retry_count > 0 and writes_since_last_submit == 0:
+                            elif (retry_count > 0 or test_retry_count > 0) and writes_since_last_submit == 0:
                                 content = (
                                     "Error: no new file changes since last failed attempt. "
                                     "Revise your fix with write_file before calling submit_fix again."
                                 )
                             else:
-                                deploy_result = await asyncio.get_running_loop().run_in_executor(None, deploy_callback)
+                                active_deploy_cb = (
+                                    redeploy_callback
+                                    if (test_retry_count > 0 and redeploy_callback is not None)
+                                    else deploy_callback
+                                )
+                                deploy_result = await asyncio.get_running_loop().run_in_executor(None, active_deploy_cb)
                                 if deploy_result["success"]:
                                     submitted = True
-                                    content = "Fix deployed successfully."
+                                    if verify_callback is not None:
+                                        verify_result = await asyncio.get_running_loop().run_in_executor(
+                                            None, verify_callback
+                                        )
+                                        if verify_result["all_passed"]:
+                                            all_tests_passed = True
+                                            content = "Fix deployed and all tests passed."
+                                        elif test_retry_count >= max_test_retries:
+                                            all_tests_passed = False
+                                            content = (
+                                                f"Maximum test retries ({max_test_retries}) reached. "
+                                                + _format_test_summary(verify_result, test_retry_count, max_test_retries)
+                                            )
+                                        else:
+                                            submitted = False
+                                            test_retry_count += 1
+                                            writes_since_last_submit = 0
+                                            content = _format_test_summary(
+                                                verify_result, test_retry_count, max_test_retries
+                                            )
+                                    else:
+                                        all_tests_passed = True
+                                        content = "Fix deployed successfully."
                                 elif retry_count >= max_deploy_retries:
                                     # exit gracefully — model cannot fix within budget
                                     submitted = True
@@ -353,7 +403,7 @@ async def run_agent_loop(
 
             messages.extend(tool_results)
 
-            if submitted:
+            if submitted and (all_tests_passed or test_retry_count >= max_test_retries):
                 break
 
             messages.append({

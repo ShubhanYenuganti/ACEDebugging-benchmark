@@ -837,3 +837,178 @@ def test_non_verbose_no_write_preview(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert "[edit →" not in captured.out
+
+
+# ── verify_callback / test-retry tests ──────────────────────────────────────
+
+def test_loop_calls_verify_after_successful_deploy(tmp_path):
+    """verify_callback fires once when deploy succeeds and tests pass."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+    from unittest.mock import MagicMock
+
+    deploy_cb = MagicMock(return_value={"success": True, "error": None})
+    verify_cb = MagicMock(return_value={"all_passed": True, "passed": [], "failed": []})
+
+    responses = [
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc0", "write_file", {"path": "deployment/handler.py", "content": "# fix"})
+        ]),
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc1", "submit_fix", {})
+        ]),
+    ]
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="openai/gpt-4o", api_key="sk-test", base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path), run_id="tv1", harness_api_key="hk", max_turns=10,
+            deploy_callback=deploy_cb, verify_callback=verify_cb,
+        ))
+
+    assert verify_cb.call_count == 1
+    assert deploy_cb.call_count == 1
+
+
+def test_loop_continues_on_test_failure_then_exits_on_pass(tmp_path):
+    """Loop injects test summary on failure and exits when tests pass on retry."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+    from unittest.mock import MagicMock
+
+    deploy_cb = MagicMock(return_value={"success": True, "error": None})
+    redeploy_cb = MagicMock(return_value={"success": True, "error": None})
+    verify_results = [
+        {"all_passed": False, "passed": [], "failed": [{"name": "test_x", "description": "", "short_error": "AssertionError"}]},
+        {"all_passed": True, "passed": [{"name": "test_x", "description": ""}], "failed": []},
+    ]
+    verify_cb = MagicMock(side_effect=verify_results)
+
+    responses = [
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc0", "write_file", {"path": "deployment/handler.py", "content": "# v1"})
+        ]),
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc1", "submit_fix", {})
+        ]),
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc2", "write_file", {"path": "deployment/handler.py", "content": "# v2"})
+        ]),
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc3", "submit_fix", {})
+        ]),
+    ]
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        submitted = asyncio.run(run_agent_loop(
+            model="openai/gpt-4o", api_key="sk-test", base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path), run_id="tv2", harness_api_key="hk", max_turns=20,
+            deploy_callback=deploy_cb, redeploy_callback=redeploy_cb,
+            verify_callback=verify_cb, max_test_retries=5,
+        ))
+
+    assert submitted is True
+    assert verify_cb.call_count == 2
+    assert redeploy_cb.call_count == 1
+
+
+def test_loop_exits_after_max_test_retries(tmp_path):
+    """Loop exits after max_test_retries even if tests keep failing."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+    from unittest.mock import MagicMock
+
+    deploy_cb = MagicMock(return_value={"success": True, "error": None})
+    redeploy_cb = MagicMock(return_value={"success": True, "error": None})
+    verify_cb = MagicMock(return_value={
+        "all_passed": False, "passed": [],
+        "failed": [{"name": "test_x", "description": "", "short_error": "AssertionError"}],
+    })
+
+    responses = []
+    for i in range(6):  # 1 initial + 5 retries
+        responses.append(_make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call(f"w{i}", "write_file", {"path": "deployment/handler.py", "content": f"# v{i}"})
+        ]))
+        responses.append(_make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call(f"s{i}", "submit_fix", {})
+        ]))
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="openai/gpt-4o", api_key="sk-test", base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path), run_id="tv3", harness_api_key="hk", max_turns=30,
+            deploy_callback=deploy_cb, redeploy_callback=redeploy_cb,
+            verify_callback=verify_cb, max_test_retries=5,
+        ))
+
+    assert verify_cb.call_count == 6  # 1 initial + 5 retries
+
+
+def test_loop_routes_retry_submit_to_redeploy_callback(tmp_path):
+    """First submit_fix uses deploy_callback; subsequent retries use redeploy_callback."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+    from unittest.mock import MagicMock
+
+    deploy_cb = MagicMock(return_value={"success": True, "error": None})
+    redeploy_cb = MagicMock(return_value={"success": True, "error": None})
+    verify_results = [
+        {"all_passed": False, "passed": [], "failed": [{"name": "t", "description": "", "short_error": "err"}]},
+        {"all_passed": True, "passed": [], "failed": []},
+    ]
+    verify_cb = MagicMock(side_effect=verify_results)
+
+    responses = [
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc0", "write_file", {"path": "deployment/handler.py", "content": "# v1"})
+        ]),
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc1", "submit_fix", {})
+        ]),
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc2", "write_file", {"path": "deployment/handler.py", "content": "# v2"})
+        ]),
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc3", "submit_fix", {})
+        ]),
+    ]
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="openai/gpt-4o", api_key="sk-test", base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path), run_id="tv4", harness_api_key="hk", max_turns=20,
+            deploy_callback=deploy_cb, redeploy_callback=redeploy_cb,
+            verify_callback=verify_cb, max_test_retries=5,
+        ))
+
+    assert deploy_cb.call_count == 1
+    assert redeploy_cb.call_count == 1
