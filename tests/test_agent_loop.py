@@ -705,3 +705,135 @@ def test_non_verbose_no_reasoning_printed(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert "[thinking]" not in captured.out
+
+
+def test_verbose_prints_write_file_preview(tmp_path, capsys):
+    """First 30 lines of write_file content printed in verbose mode."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+
+    content_lines = [f"line {i}" for i in range(1, 41)]  # 40 lines
+    file_content = "\n".join(content_lines)
+
+    tool_call = _make_tool_call("tc0", "write_file",
+        {"path": "deployment/handler.py", "content": file_content})
+    submit_call = _make_tool_call("tc1", "submit_fix", {})
+
+    response1 = _make_litellm_response("tool_calls", tool_calls=[tool_call])
+    response2 = _make_litellm_response("tool_calls", tool_calls=[submit_call])
+
+    with patch("harness.agent.loop.litellm.completion") as mock_llm, \
+         patch("harness.agent.loop.litellm.stream_chunk_builder") as mock_builder, \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        mock_llm.return_value = []
+        mock_builder.side_effect = [response1, response2]
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t_preview1",
+            harness_api_key="hk",
+            max_turns=10,
+            verbose=True,
+        ))
+
+    captured = capsys.readouterr()
+    assert "[edit →" in captured.out
+    assert "deployment/handler.py" in captured.out
+    assert "line 1" in captured.out
+    assert "line 30" in captured.out
+    assert "line 31" not in captured.out
+    assert "10 more lines" in captured.out
+
+
+def test_verbose_write_file_preview_short_file(tmp_path, capsys):
+    """All lines printed when content has fewer than 30 lines."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+
+    file_content = "line 1\nline 2\nline 3"
+
+    tool_call = _make_tool_call("tc0", "write_file",
+        {"path": "deployment/handler.py", "content": file_content})
+    submit_call = _make_tool_call("tc1", "submit_fix", {})
+
+    response1 = _make_litellm_response("tool_calls", tool_calls=[tool_call])
+    response2 = _make_litellm_response("tool_calls", tool_calls=[submit_call])
+
+    with patch("harness.agent.loop.litellm.completion") as mock_llm, \
+         patch("harness.agent.loop.litellm.stream_chunk_builder") as mock_builder, \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        mock_llm.return_value = []
+        mock_builder.side_effect = [response1, response2]
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t_preview2",
+            harness_api_key="hk",
+            max_turns=10,
+            verbose=True,
+        ))
+
+    captured = capsys.readouterr()
+    assert "line 1" in captured.out
+    assert "line 3" in captured.out
+    assert "more lines" not in captured.out
+
+
+def test_non_verbose_no_write_preview(tmp_path, capsys):
+    """No [edit →] block printed when verbose=False."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+
+    content = "\n".join(f"line {i}" for i in range(1, 10))
+
+    tool_call = _make_tool_call("tc0", "write_file",
+        {"path": "deployment/handler.py", "content": content})
+    submit_call = _make_tool_call("tc1", "submit_fix", {})
+
+    responses = [
+        _make_litellm_response("tool_calls", tool_calls=[tool_call]),
+        _make_litellm_response("tool_calls", tool_calls=[submit_call]),
+    ]
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t_preview3",
+            harness_api_key="hk",
+            max_turns=10,
+            verbose=False,
+        ))
+
+    captured = capsys.readouterr()
+    assert "[edit →" not in captured.out

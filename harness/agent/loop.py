@@ -318,6 +318,13 @@ async def run_agent_loop(
                             if name == "write_file" and content.startswith("Written "):
                                 writes_made += 1
                                 writes_since_last_submit += 1
+                                if verbose:
+                                    written_content = args.get("content", "")
+                                    file_path = args.get("path", "?")
+                                    lines = written_content.splitlines()
+                                    preview = "\n".join(f"    {line}" for line in lines[:30])
+                                    suffix = f"\n    ... ({len(lines) - 30} more lines)" if len(lines) > 30 else ""
+                                    print(f"  [edit → {file_path}]\n{preview}{suffix}", flush=True)
                 else:
                     try:
                         mcp_result = await session.call_tool(name, args)
