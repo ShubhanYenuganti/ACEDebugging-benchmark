@@ -13,9 +13,33 @@ from harness.runner.deployment_handler import (
     _ensure_artifact_bucket,
     handle_submission,
 )
+from harness.runner.context_builder import corpus_dir_for_scenario
 from harness.shared.file_differ import snapshot
 from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import init_run, log_tool_call
+
+
+def _parse_pytest_output(output: str) -> dict:
+    passed, failed = [], []
+    lines = output.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"(PASSED|FAILED)\s+\S+::(\w+)", line)
+        if not m:
+            continue
+        status, name = m.group(1), m.group(2)
+        entry = {"name": name, "description": ""}
+        if status == "PASSED":
+            passed.append(entry)
+        else:
+            short_error = ""
+            for j in range(i + 1, min(i + 10, len(lines))):
+                err = lines[j].strip().lstrip("E").strip()
+                if err.startswith(("AssertionError", "KeyError", "ValueError", "TypeError")):
+                    short_error = err
+                    break
+            entry["short_error"] = short_error
+            failed.append(entry)
+    return {"all_passed": len(failed) == 0, "passed": passed, "failed": failed}
 
 
 class ScenarioRunner:
@@ -120,6 +144,20 @@ class ScenarioRunner:
             turn = self.tool_call_count
         timestamp = datetime.datetime.utcnow().isoformat() + "Z"
         log_tool_call(self.run_id, turn, tool_name, input, output, timestamp)
+
+    def run_functional_tests(self) -> dict:
+        corpus_dir = corpus_dir_for_scenario(self.scenario_dir)
+        functional_test = corpus_dir / "functional_test.py"
+        proc = subprocess.run(
+            [
+                "python", "-m", "pytest", str(functional_test),
+                "-v", "--tb=line", "--no-header", "-q",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return _parse_pytest_output(proc.stdout + "\n" + proc.stderr)
 
     def on_model_redeploy(self) -> dict:
         with self._lock:

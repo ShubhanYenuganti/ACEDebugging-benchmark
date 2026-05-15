@@ -338,3 +338,52 @@ def test_corpus_dir_for_scenario_raises_on_bad_name(tmp_path):
     (tmp_path / "corpus").mkdir(parents=True)
     with pytest.raises(ValueError, match="Cannot parse arch number"):
         corpus_dir_for_scenario(bad, corpus_root=tmp_path / "corpus")
+
+
+from harness.runner.scenario_runner import ScenarioRunner, _parse_pytest_output
+
+def test_parse_pytest_output_all_passing():
+    output = (
+        "PASSED functional_test.py::test_friend_request\n"
+        "PASSED functional_test.py::test_read_list\n"
+        "2 passed in 1.23s\n"
+    )
+    result = _parse_pytest_output(output)
+    assert result["all_passed"] is True
+    assert len(result["passed"]) == 2
+    assert len(result["failed"]) == 0
+    assert result["passed"][0]["name"] == "test_friend_request"
+
+def test_parse_pytest_output_with_failures():
+    output = (
+        "PASSED functional_test.py::test_friend_request\n"
+        "FAILED functional_test.py::test_accept_state\n"
+        "E   AssertionError: state 'Requested' != 'Friends'\n"
+        "1 passed, 1 failed in 2.00s\n"
+    )
+    result = _parse_pytest_output(output)
+    assert result["all_passed"] is False
+    assert len(result["passed"]) == 1
+    assert len(result["failed"]) == 1
+    assert result["failed"][0]["name"] == "test_accept_state"
+    assert "Requested" in result["failed"][0]["short_error"]
+
+def test_run_functional_tests_calls_subprocess(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-test")
+    mocker.patch(
+        "harness.runner.scenario_runner.corpus_dir_for_scenario",
+        return_value=tmp_path / "corpus" / "arch_01_x",
+    )
+    mocker.patch(
+        "subprocess.run",
+        return_value=MagicMock(
+            returncode=0,
+            stdout="PASSED functional_test.py::test_x\n1 passed in 0.5s\n",
+            stderr="",
+        ),
+    )
+    result = runner.run_functional_tests()
+    assert result["all_passed"] is True
+    assert result["passed"][0]["name"] == "test_x"
