@@ -404,3 +404,205 @@ def test_file_tool_calls_not_logged(tmp_path):
         ))
 
     mock_log.assert_not_called()
+
+
+# ── deploy_callback tests ─────────────────────────────────────────────────────
+
+def test_deploy_callback_success(tmp_path):
+    """deploy_callback returns success — loop exits with submitted=True."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+    from unittest.mock import MagicMock
+
+    deploy_callback = MagicMock(return_value={"success": True, "error": None})
+
+    responses = [
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc0", "write_file",
+                            {"path": "deployment/handler.py", "content": "# fix"})
+        ]),
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc1", "submit_fix", {})
+        ]),
+    ]
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        submitted = asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t_cb1",
+            harness_api_key="hk",
+            max_turns=10,
+            deploy_callback=deploy_callback,
+        ))
+
+    assert submitted is True
+    assert deploy_callback.call_count == 1
+
+
+def test_deploy_callback_failure_then_success(tmp_path):
+    """deploy_callback fails once, loop continues, second attempt succeeds."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+    from unittest.mock import MagicMock
+
+    deploy_results = [
+        {"success": False, "error": "no changes detected"},
+        {"success": True, "error": None},
+    ]
+    deploy_callback = MagicMock(side_effect=deploy_results)
+
+    responses = [
+        # turn 1: write_file
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc0", "write_file",
+                            {"path": "deployment/handler.py", "content": "# fix v1"})
+        ]),
+        # turn 2: submit_fix (fails)
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc1", "submit_fix", {})
+        ]),
+        # turn 3: write_file again (after failure)
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc2", "write_file",
+                            {"path": "deployment/handler.py", "content": "# fix v2"})
+        ]),
+        # turn 4: submit_fix again (succeeds)
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc3", "submit_fix", {})
+        ]),
+    ]
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        submitted = asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t_cb2",
+            harness_api_key="hk",
+            max_turns=10,
+            deploy_callback=deploy_callback,
+        ))
+
+    assert submitted is True
+    assert deploy_callback.call_count == 2
+
+
+def test_deploy_callback_max_retries_exits(tmp_path):
+    """Loop exits with submitted=True when max_deploy_retries exhausted."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+    from unittest.mock import MagicMock
+
+    deploy_callback = MagicMock(return_value={"success": False, "error": "persistent error"})
+
+    # Need: write_file + submit_fix repeated (1 initial + 5 retries = 6 calls)
+    # Each retry needs a write_file + submit_fix pair (to pass writes_since_last_submit guard)
+    responses = []
+    for i in range(6):
+        responses.append(_make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call(f"w{i}", "write_file",
+                            {"path": "deployment/handler.py", "content": f"# fix v{i}"})
+        ]))
+        responses.append(_make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call(f"s{i}", "submit_fix", {})
+        ]))
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        submitted = asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t_cb3",
+            harness_api_key="hk",
+            max_turns=30,
+            deploy_callback=deploy_callback,
+            max_deploy_retries=5,
+        ))
+
+    assert submitted is True
+    assert deploy_callback.call_count == 6  # 1 initial + 5 retries
+
+
+def test_deploy_callback_refuses_submit_without_new_write(tmp_path):
+    """submit_fix refused if no write_file since last failed attempt."""
+    (tmp_path / "deployment").mkdir()
+    from harness.agent.loop import run_agent_loop
+    from unittest.mock import MagicMock
+
+    deploy_callback = MagicMock(return_value={"success": False, "error": "no changes"})
+
+    responses = [
+        # turn 1: write_file
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc0", "write_file",
+                            {"path": "deployment/handler.py", "content": "# fix"})
+        ]),
+        # turn 2: submit_fix (deploy_callback returns failure)
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc1", "submit_fix", {})
+        ]),
+        # turn 3: submit_fix again without any write_file in between — must be refused
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc2", "submit_fix", {})
+        ]),
+        # turn 4: write_file, then exit via stop
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc3", "write_file",
+                            {"path": "deployment/handler.py", "content": "# fix v2"})
+        ]),
+        _make_litellm_response("stop"),
+        _make_litellm_response("stop"),
+    ]
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        submitted = asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t_cb4",
+            harness_api_key="hk",
+            max_turns=10,
+            deploy_callback=deploy_callback,
+        ))
+    assert submitted is False
+
+    # deploy_callback only called once (second submit_fix without write was refused)
+    assert deploy_callback.call_count == 1
