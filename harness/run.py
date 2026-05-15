@@ -6,8 +6,6 @@ import asyncio
 import json
 import os
 import sys
-import threading
-import time
 import traceback
 import uuid
 
@@ -21,9 +19,6 @@ from harness.runner.scenario_runner import ScenarioRunner
 from harness.scoring.scorer import score_run
 from harness.verify.pass1_functional import run_pass1
 from harness.verify.verify_loop import run_verify_loop
-
-_TIMEOUT_SECONDS = 30 * 60  # 30 minutes
-_SIGNAL_FILE = os.environ.get("ACE_BENCH_SIGNAL_FILE", "/tmp/ace-bench-update.json")
 
 
 def _validate_scenario(scenario_dir: str) -> None:
@@ -147,20 +142,51 @@ def _print_score_summary(score: dict) -> None:
     print()
 
 
+_CLOUD_PROVIDER_PREFIXES = (
+    "anthropic/",
+    "openai/",
+    "azure/",
+    "gemini/",
+    "vertex_ai/",
+    "bedrock/",
+    "cohere/",
+    "groq/",
+    "mistral/",
+    "deepseek/",
+    "xai/",
+    "perplexity/",
+    "together_ai/",
+    "fireworks_ai/",
+)
+
+
 def _resolve_inference_config(
     args: argparse.Namespace,
 ) -> tuple[str | None, str | None, str | None, dict | None]:
     """Return (model, api_key, base_url, extra_headers) for the active inference backend.
 
-    VPS mode activates when ACE_VPS_ENDPOINT is set or --base-url is passed.
+    Resolution order:
+      1. --base-url given → VPS mode (explicit override).
+      2. --model has a cloud-provider prefix (anthropic/, openai/, …) → cloud mode,
+         even if ACE_VPS_ENDPOINT is set in the environment.
+      3. ACE_VPS_ENDPOINT set → VPS mode (default model from ACE_VPS_MODEL).
+      4. Otherwise → cloud mode using --model / --api-key as-is (LiteLLM picks up
+         provider env vars like ANTHROPIC_API_KEY, OPENAI_API_KEY).
     Set ACE_VPS_AUTH_TOKEN for RunPod Secure Cloud pods (adds Authorization header).
-    Anthropic mode is the fallback (existing behaviour, unchanged).
     """
     vps_endpoint = os.environ.get("ACE_VPS_ENDPOINT", "").strip()
-    in_vps_mode = bool(vps_endpoint) or bool(args.base_url)
+    model_arg = (args.model or "").strip()
+    is_cloud_model = any(model_arg.startswith(p) for p in _CLOUD_PROVIDER_PREFIXES)
+
+    if args.base_url:
+        in_vps_mode = True
+    elif is_cloud_model:
+        in_vps_mode = False
+    else:
+        in_vps_mode = bool(vps_endpoint)
 
     if in_vps_mode:
-        endpoint = vps_endpoint or args.base_url
+        endpoint = args.base_url or vps_endpoint
         model_name = os.environ.get("ACE_VPS_MODEL", "qwen2.5-coder:32b")
         api_key = os.environ.get("ACE_VPS_API_KEY", "ollama")
         model = args.model or f"ollama/{model_name}"
@@ -170,7 +196,8 @@ def _resolve_inference_config(
               + ("  (auth)" if extra_headers else ""))
         return model, api_key, endpoint, extra_headers
 
-    return args.model, args.api_key, args.base_url, None
+    print(f"[inference] cloud mode → model={args.model}")
+    return args.model, args.api_key, None, None
 
 
 def main() -> None:
@@ -216,12 +243,6 @@ def main() -> None:
     args = parser.parse_args()
 
     load_dotenv()
-
-    # Remove stale redeployment signal from a previous run
-    try:
-        os.remove(_SIGNAL_FILE)
-    except OSError:
-        pass
 
     scenario_dir = os.path.abspath(args.scenario_dir)
     run_id = args.run_id or uuid.uuid4().hex[:8]
@@ -282,8 +303,6 @@ def main() -> None:
     # Step 7 — hand off to model
     _print_context(ctx)
 
-    _agent_error: BaseException | None = None
-
     _model, _api_key, _base_url, _extra_headers = _resolve_inference_config(args)
 
     if _model:
@@ -292,58 +311,32 @@ def main() -> None:
             print("ERROR: HARNESS_API_KEY env var is required when --model is used", file=sys.stderr)
             sys.exit(1)
 
-        def _run_agent():
-            nonlocal _agent_error
-            try:
-                asyncio.run(
-                    run_agent_loop(
-                        model=_model,
-                        api_key=_api_key,
-                        base_url=_base_url,
-                        extra_headers=_extra_headers,
-                        context=ctx,
-                        scenario_dir=scenario_dir,
-                        run_id=run_id,
-                        harness_api_key=_harness_key,
-                        verbose=args.verbose,
-                    )
+        try:
+            asyncio.run(
+                run_agent_loop(
+                    model=_model,
+                    api_key=_api_key,
+                    base_url=_base_url,
+                    extra_headers=_extra_headers,
+                    context=ctx,
+                    scenario_dir=scenario_dir,
+                    run_id=run_id,
+                    harness_api_key=_harness_key,
+                    verbose=args.verbose,
+                    deploy_callback=runner.attempt_deployment,
                 )
-            except BaseException as exc:
-                _agent_error = exc
-                traceback.print_exc()
-
-        threading.Thread(target=_run_agent, daemon=True, name="agent-runner").start()
-
-    # Step 8 — block until submission complete or 30-minute timeout.
-    # THREADING NOTE: runner.submitted is set True BEFORE handle_submission() completes
-    # (double-submission guard). We must also wait for _last_deployment_outcome != "unknown"
-    # as the real completion signal.
-    _redeploy_thread: threading.Thread | None = None
-
-    deadline = time.monotonic() + _TIMEOUT_SECONDS
-    while not runner.submitted or runner._last_deployment_outcome == "unknown":
-        if _agent_error is not None:
-            log_verify_result(run_id, {"outcome": "agent_error"})
-            print(f"ERROR: Agent crashed: {_agent_error}", file=sys.stderr)
-            sys.exit(1)
-
-        if time.monotonic() > deadline:
-            log_verify_result(run_id, {"outcome": "timed_out"})
-            print("ERROR: Timed out waiting for model redeployment.", file=sys.stderr)
-            sys.exit(1)
-
-        # Detect update-stack signal from localstack-deployer
-        if _redeploy_thread is None and os.path.isfile(_SIGNAL_FILE):
-            try:
-                os.remove(_SIGNAL_FILE)
-            except OSError:
-                pass
-            _redeploy_thread = threading.Thread(
-                target=runner.on_model_redeploy, daemon=True
             )
-            _redeploy_thread.start()
+        except BaseException as exc:
+            log_verify_result(run_id, {"outcome": "agent_error"})
+            print(f"ERROR: Agent crashed: {exc}", file=sys.stderr)
+            traceback.print_exc()
+            sys.exit(1)
 
-        time.sleep(1)
+    # Step 8 — ensure deployment outcome is recorded
+    # (attempt_deployment sets _last_deployment_outcome on success;
+    #  if loop exited without a successful deploy, record it as no_submission)
+    if runner._last_deployment_outcome == "unknown":
+        runner._last_deployment_outcome = "no_submission"
 
     # Step 9 — verify loop
     verify_result = run_verify_loop(
