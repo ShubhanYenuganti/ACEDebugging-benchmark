@@ -1,7 +1,8 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { LambdaClient, CreateFunctionCommand } from "@aws-sdk/client-lambda";
-import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, CreateTableCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { marshall as marshallUtil } from "@aws-sdk/util-dynamodb";
 import { SQSClient, CreateQueueCommand } from "@aws-sdk/client-sqs";
 import { CloudFormationClient, CreateStackCommand } from "@aws-sdk/client-cloudformation";
 import JSZip from "jszip";
@@ -39,6 +40,7 @@ const sesCl = new SESClient(awsConfig);
 
 const FN = "test-identity-fn";
 const TABLE = "test-table";
+const RANGE_TABLE = "test-range-table";
 const QUEUE = "test-queue";
 
 let TOPIC_ARN;
@@ -81,6 +83,32 @@ before(async () => {
     })),
   ]) {
     try { await op(); } catch (e) { if (!e.message?.includes("already exist")) throw e; }
+  }
+
+  // HASH+RANGE table for ace_scan_table_range tests
+  try {
+    await dynamo.send(new CreateTableCommand({
+      TableName: RANGE_TABLE,
+      AttributeDefinitions: [
+        { AttributeName: "pk", AttributeType: "S" },
+        { AttributeName: "sk", AttributeType: "S" },
+      ],
+      KeySchema: [
+        { AttributeName: "pk", KeyType: "HASH" },
+        { AttributeName: "sk", KeyType: "RANGE" },
+      ],
+      BillingMode: "PAY_PER_REQUEST",
+    }));
+  } catch (e) {
+    if (!e.message?.includes("already exist")) throw e;
+  }
+  try {
+    await dynamo.send(new PutItemCommand({
+      TableName: RANGE_TABLE,
+      Item: marshallUtil({ pk: "user-1", sk: "profile", name: "Alice" }),
+    }));
+  } catch (e) {
+    if (!e.message?.includes("already exist")) throw e;
   }
 
   // SNS topic (CreateTopic is idempotent — always returns ARN)
@@ -618,5 +646,62 @@ test("ace_simulate_policy: nonexistent principal returns error", async () => {
 
 test("ace_simulate_policy: missing args returns error", async () => {
   const result = await probeExtendedTools.find(t => t.name === "ace_simulate_policy").handler({});
+  assert.ok(result.error);
+});
+
+// === DynamoDB Query (ace_scan_table_range) ===
+test("ace_scan_table_range returns items matching key condition", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table_range");
+  assert.ok(t, "ace_scan_table_range tool must exist");
+  const result = await t.handler({
+    table_name: RANGE_TABLE,
+    key_condition: "pk = :pk",
+    expression_values: { ":pk": "user-1" },
+  });
+  assert.ok(!result.error, `unexpected error: ${result.error}`);
+  assert.ok("items" in result);
+  assert.ok("count" in result);
+  assert.ok("scanned_count" in result);
+  assert.strictEqual(result.count, 1);
+  assert.strictEqual(result.items[0].pk, "user-1");
+});
+
+test("ace_scan_table_range clamps limit to 25", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table_range");
+  const result = await t.handler({
+    table_name: RANGE_TABLE,
+    key_condition: "pk = :pk",
+    expression_values: { ":pk": "user-1" },
+    limit: 999,
+  });
+  assert.ok(!result.error);
+  assert.ok(result.count <= 25);
+});
+
+test("ace_scan_table_range returns error for nonexistent table", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table_range");
+  const result = await t.handler({
+    table_name: "nonexistent-table-xyz",
+    key_condition: "pk = :pk",
+    expression_values: { ":pk": "x" },
+  });
+  assert.ok(result.error, "should return error for nonexistent table");
+});
+
+test("ace_scan_table_range returns error when table_name missing", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table_range");
+  const result = await t.handler({ key_condition: "pk = :pk", expression_values: { ":pk": "x" } });
+  assert.ok(result.error);
+});
+
+test("ace_scan_table_range returns error when key_condition missing", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table_range");
+  const result = await t.handler({ table_name: RANGE_TABLE, expression_values: { ":pk": "x" } });
+  assert.ok(result.error);
+});
+
+test("ace_scan_table_range returns error when expression_values missing", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table_range");
+  const result = await t.handler({ table_name: RANGE_TABLE, key_condition: "pk = :pk" });
   assert.ok(result.error);
 });

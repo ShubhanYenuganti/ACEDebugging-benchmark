@@ -14,7 +14,8 @@ import {
   GetShardIteratorCommand,
   GetRecordsCommand,
 } from "@aws-sdk/client-dynamodb-streams";
-import { unmarshall } from "@aws-sdk/util-dynamodb";
+import { DynamoDBClient, QueryCommand } from "@aws-sdk/client-dynamodb";
+import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { KMSClient, EncryptCommand, DecryptCommand } from "@aws-sdk/client-kms";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { STSClient, GetCallerIdentityCommand, AssumeRoleCommand } from "@aws-sdk/client-sts";
@@ -40,6 +41,7 @@ const r53ResolverClient = new Route53ResolverClient(awsConfig);
 const kinesisClient = new KinesisClient(awsConfig);
 const firehoseClient = new FirehoseClient(awsConfig);
 const dynamoStreamsClient = new DynamoDBStreamsClient(awsConfig);
+const dynamoClient = new DynamoDBClient(awsConfig);
 const kmsClient = new KMSClient(awsConfig);
 const secretsClient = new SecretsManagerClient(awsConfig);
 const stsClient = new STSClient(awsConfig);
@@ -592,6 +594,45 @@ export const probeExtendedTools = [
         }));
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "IAM_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_scan_table_range",
+    description: "Query a DynamoDB table or index with a key condition expression. Read-only. Returns up to 25 items.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        table_name: { type: "string" },
+        index_name: { type: "string" },
+        key_condition: { type: "string" },
+        expression_values: { type: "object" },
+        limit: { type: "number" },
+      },
+      required: ["table_name", "key_condition", "expression_values"],
+    },
+    async handler({ table_name, index_name, key_condition, expression_values, limit = 10 } = {}) {
+      if (!table_name) return { error: "table_name is required" };
+      if (!key_condition) return { error: "key_condition is required" };
+      if (!expression_values || typeof expression_values !== "object")
+        return { error: "expression_values is required and must be an object" };
+      const clampedLimit = Math.min(Math.max(1, limit ?? 10), 25);
+      try {
+        const params = {
+          TableName: table_name,
+          KeyConditionExpression: key_condition,
+          ExpressionAttributeValues: marshall(expression_values),
+          Limit: clampedLimit,
+        };
+        if (index_name) params.IndexName = index_name;
+        const res = await dynamoClient.send(new QueryCommand(params));
+        return {
+          items: (res.Items ?? []).map(item => unmarshall(item)),
+          count: res.Count ?? 0,
+          scanned_count: res.ScannedCount ?? 0,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "DYNAMO_ERROR" };
       }
     },
   },
