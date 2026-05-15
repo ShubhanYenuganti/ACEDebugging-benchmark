@@ -107,17 +107,6 @@ def test_list_directory(tmp_path):
     assert "lambda" in result
 
 
-def test_submit_fix_writes_signal(tmp_path, monkeypatch):
-    import harness.agent.tools as t_mod
-    signal_path = str(tmp_path / "signal.json")
-    monkeypatch.setattr(t_mod, "SIGNAL_FILE", signal_path)
-    from harness.agent.tools import dispatch_file_tool
-    result = dispatch_file_tool("submit_fix", {}, str(tmp_path))
-    assert pathlib.Path(signal_path).exists()
-    assert "submitted" in result.lower()
-    data = json.loads(pathlib.Path(signal_path).read_text())
-    assert data == {"trigger": "update-stack"}
-
 
 def test_dispatch_unknown_tool(tmp_path):
     from harness.agent.tools import dispatch_file_tool
@@ -233,8 +222,46 @@ def test_loop_exits_on_end_turn(tmp_path):
     assert submitted is False
 
 
-def test_loop_exits_on_submit_fix(tmp_path, monkeypatch):
-    """Model calls submit_fix — loop exits with submitted=True, signal file written."""
+def test_loop_exits_on_submit_fix(tmp_path):
+    """Model calls write_file then submit_fix — loop exits with submitted=True."""
+    (tmp_path / "deployment").mkdir()
+
+    from harness.agent.loop import run_agent_loop
+
+    responses = [
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc0", "write_file",
+                            {"path": "deployment/handler.py", "content": "# fix"})
+        ]),
+        _make_litellm_response("tool_calls", tool_calls=[
+            _make_tool_call("tc1", "submit_fix", {})
+        ]),
+    ]
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        submitted = asyncio.run(run_agent_loop(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t002",
+            harness_api_key="hk",
+            max_turns=5,
+        ))
+
+    assert submitted is True
+
+
+def test_submit_fix_refused_without_write(tmp_path, monkeypatch):
+    """submit_fix with no prior write_file is refused; loop continues, submitted stays False."""
     import harness.agent.tools as t_mod
     signal_path = str(tmp_path / "signal.json")
     monkeypatch.setattr(t_mod, "SIGNAL_FILE", signal_path)
@@ -258,13 +285,13 @@ def test_loop_exits_on_submit_fix(tmp_path, monkeypatch):
             context={"scenario_brief": "b", "instruction": "i",
                      "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
             scenario_dir=str(tmp_path),
-            run_id="t002",
+            run_id="t002b",
             harness_api_key="hk",
-            max_turns=5,
+            max_turns=3,
         ))
 
-    assert submitted is True
-    assert pathlib.Path(signal_path).exists()
+    assert submitted is False
+    assert not pathlib.Path(signal_path).exists()
 
 
 def test_loop_respects_max_turns(tmp_path):
@@ -305,6 +332,7 @@ def test_mcp_tool_calls_are_logged(tmp_path):
     responses = [
         _make_litellm_response("tool_calls", tool_calls=[_make_tool_call("tc1", "ace_invoke_lambda", {"function_name": "fn", "payload": {}})]),
         _make_litellm_response("stop"),
+        _make_litellm_response("stop"),
     ]
 
     with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
@@ -333,6 +361,16 @@ def test_mcp_tool_calls_are_logged(tmp_path):
     assert tool_name == "ace_invoke_lambda"
 
 
+def test_submit_fix_does_not_write_signal_file(tmp_path):
+    import pathlib
+    from harness.agent.tools import dispatch_file_tool
+    signal = pathlib.Path("/tmp/ace-bench-update.json")
+    if signal.exists():
+        signal.unlink()
+    dispatch_file_tool("submit_fix", {}, str(tmp_path))
+    assert not signal.exists(), "submit_fix must not write signal file when deploy_callback is used"
+
+
 def test_file_tool_calls_not_logged(tmp_path):
     """File tool calls are NOT passed to result_logger."""
     from harness.agent.loop import run_agent_loop
@@ -341,6 +379,7 @@ def test_file_tool_calls_not_logged(tmp_path):
 
     responses = [
         _make_litellm_response("tool_calls", tool_calls=[_make_tool_call("tc1", "list_directory", {"path": "deployment"})]),
+        _make_litellm_response("stop"),
         _make_litellm_response("stop"),
     ]
 

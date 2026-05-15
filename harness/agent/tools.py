@@ -153,9 +153,6 @@ def dispatch_file_tool(name: str, inputs: dict, scenario_dir: str) -> str:
         return "\n".join(entries) if entries else "(empty)"
 
     if name == "submit_fix":
-        pathlib.Path(SIGNAL_FILE).write_text(
-            json.dumps({"trigger": "update-stack"}), encoding="utf-8"
-        )
-        return "Fix submitted. Redeployment triggered."
+        return ""
 
     return f"Error: unknown file tool '{name}'."
