@@ -133,3 +133,20 @@ class ScenarioRunner:
             raise
         self._last_deployment_outcome = result.get("outcome", "unknown")
         return result
+
+    def attempt_deployment(self) -> dict:
+        with self._lock:
+            if self.submitted:
+                return {"success": False, "error": "Already submitted (final)."}
+        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot)
+        outcome = result.get("outcome", "unknown")
+        success = outcome == "deploy_success"
+        if success:
+            with self._lock:
+                self.submitted = True
+            self._last_deployment_outcome = outcome
+        return {
+            "success": success,
+            "error": result.get("error", outcome),
+            "result": result,
+        }

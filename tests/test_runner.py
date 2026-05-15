@@ -270,3 +270,44 @@ class TestScenarioRunner:
         assert mock_log.call_count == 2
         first_call_args = mock_log.call_args_list[0]
         assert first_call_args.args[2] == "ace_invoke_lambda"
+
+
+def test_attempt_deployment_returns_success_dict(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-xyz")
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value={"outcome": "deploy_success"},
+    )
+    result = runner.attempt_deployment()
+    assert result["success"] is True
+    assert runner.submitted is True
+
+
+def test_attempt_deployment_returns_failure_dict_on_no_changes(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-xyz")
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value={"outcome": "no_changes", "error": "no changes detected"},
+    )
+    result = runner.attempt_deployment()
+    assert result["success"] is False
+    assert runner.submitted is False
+    assert "no changes" in result["error"]
+
+
+def test_attempt_deployment_blocked_after_success(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-xyz")
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value={"outcome": "deploy_success"},
+    )
+    runner.attempt_deployment()
+    result = runner.attempt_deployment()
+    assert result["success"] is False
+    assert "Already submitted" in result["error"]
