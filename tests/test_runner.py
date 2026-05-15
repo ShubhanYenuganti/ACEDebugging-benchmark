@@ -1,9 +1,10 @@
 import json
 import os
+from pathlib import Path
 
 import pytest
 
-from harness.runner.context_builder import build_context
+from harness.runner.context_builder import build_context, corpus_dir_for_scenario
 
 _FIXED_INSTRUCTION = (
     "A deployed instance of this system is running in your local environment. "
@@ -316,9 +317,6 @@ def test_attempt_deployment_blocked_after_success(tmp_path, mocker):
     assert "Already submitted" in result["error"]
 
 
-from pathlib import Path
-from harness.runner.context_builder import corpus_dir_for_scenario
-
 def test_corpus_dir_for_scenario_resolves_arch01(tmp_path):
     corpus = tmp_path / "corpus" / "arch_01_serverless_microservices"
     corpus.mkdir(parents=True)
@@ -332,3 +330,11 @@ def test_corpus_dir_for_scenario_raises_on_unknown_arch(tmp_path):
     scenario = tmp_path / "scenarios" / "arch99_fault01_connectivity"
     with pytest.raises(FileNotFoundError):
         corpus_dir_for_scenario(scenario, corpus_root=tmp_path / "corpus")
+
+
+def test_corpus_dir_for_scenario_raises_on_bad_name(tmp_path):
+    bad = tmp_path / "scenarios" / "noarch_fault01"
+    bad.mkdir(parents=True)
+    (tmp_path / "corpus").mkdir(parents=True)
+    with pytest.raises(ValueError, match="Cannot parse arch number"):
+        corpus_dir_for_scenario(bad, corpus_root=tmp_path / "corpus")

@@ -1,4 +1,6 @@
 import os
+import re
+from pathlib import Path
 
 from botocore.exceptions import ClientError
 
@@ -53,12 +55,12 @@ def corpus_dir_for_scenario(
     scenario_dir: "Path | str",
     corpus_root: "Path | str | None" = None,
 ) -> "Path":
-    import re
-    from pathlib import Path as _Path
-    scenario_dir = _Path(scenario_dir).resolve()
+    scenario_dir = Path(scenario_dir).resolve()
     if corpus_root is None:
         corpus_root = scenario_dir.parent.parent / "corpus"
-    corpus_root = _Path(corpus_root)
+    corpus_root = Path(corpus_root)
+    if not corpus_root.is_dir():
+        raise FileNotFoundError(f"corpus_root does not exist: {corpus_root}")
     m = re.match(r"arch(\d+)_", scenario_dir.name)
     if not m:
         raise ValueError(f"Cannot parse arch number from: {scenario_dir.name}")
@@ -70,5 +72,9 @@ def corpus_dir_for_scenario(
     if not candidates:
         raise FileNotFoundError(
             f"No corpus directory for arch {arch_num} under {corpus_root}"
+        )
+    if len(candidates) > 1:
+        raise ValueError(
+            f"Multiple corpus directories for arch {arch_num} under {corpus_root}: {candidates}"
         )
     return candidates[0]
