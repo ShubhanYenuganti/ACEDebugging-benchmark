@@ -7,10 +7,13 @@ from harness.runner.context_builder import build_context
 
 _FIXED_INSTRUCTION = (
     "A deployed instance of this system is running in your local environment. "
-    "The deployment directory and CloudFormation template are available to you directly. "
-    "Diagnostic tools are available via MCP. Diagnose the reported symptom, edit whatever "
-    "files need changing, and redeploy using localstack-deployer when ready. "
-    "Your first successful redeployment is your scored submission."
+    "Inspect the deployment directory and CloudFormation template with read_file "
+    "and list_directory. Diagnostic tools are available via MCP to probe the "
+    "running system. Diagnose the reported symptom, edit any broken files with "
+    "write_file (deployment/ files or faulted.yaml), then call submit_fix to "
+    "redeploy. submit_fix will refuse if no write_file has occurred — you must "
+    "edit at least one file before submitting. Your first submit_fix is your "
+    "scored submission."
 )
 
 
@@ -311,3 +314,21 @@ def test_attempt_deployment_blocked_after_success(tmp_path, mocker):
     result = runner.attempt_deployment()
     assert result["success"] is False
     assert "Already submitted" in result["error"]
+
+
+from pathlib import Path
+from harness.runner.context_builder import corpus_dir_for_scenario
+
+def test_corpus_dir_for_scenario_resolves_arch01(tmp_path):
+    corpus = tmp_path / "corpus" / "arch_01_serverless_microservices"
+    corpus.mkdir(parents=True)
+    (tmp_path / "scenarios" / "arch01_fault07_data_correctness").mkdir(parents=True)
+    scenario = tmp_path / "scenarios" / "arch01_fault07_data_correctness"
+    result = corpus_dir_for_scenario(scenario, corpus_root=tmp_path / "corpus")
+    assert result == corpus
+
+def test_corpus_dir_for_scenario_raises_on_unknown_arch(tmp_path):
+    (tmp_path / "scenarios" / "arch99_fault01_connectivity").mkdir(parents=True)
+    scenario = tmp_path / "scenarios" / "arch99_fault01_connectivity"
+    with pytest.raises(FileNotFoundError):
+        corpus_dir_for_scenario(scenario, corpus_root=tmp_path / "corpus")
