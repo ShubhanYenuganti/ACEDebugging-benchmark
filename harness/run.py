@@ -324,6 +324,9 @@ def main() -> None:
                     harness_api_key=_harness_key,
                     verbose=args.verbose,
                     deploy_callback=runner.attempt_deployment,
+                    redeploy_callback=runner.attempt_redeployment,
+                    verify_callback=runner.run_functional_tests,
+                    max_test_retries=5,
                 )
             )
         except BaseException as exc:
