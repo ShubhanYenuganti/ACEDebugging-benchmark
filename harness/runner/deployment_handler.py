@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import zipfile
 
 from botocore.exceptions import ClientError, WaiterError
@@ -60,7 +61,11 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict) -> d
             s3_client.put_object(
                 Bucket=_ARTIFACT_BUCKET, Key=zip_key, Body=_zip_file(abs_path)
             )
-            template_body = template_body.replace("old-handler.zip", zip_key)
+            template_body = re.sub(
+                r'(S3Key:\s*)\S*' + re.escape(fn_name) + r'\.zip',
+                r'\g<1>' + zip_key,
+                template_body,
+            )
 
     # Step 4 — CloudFormation update
     try:
@@ -75,10 +80,9 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict) -> d
             return {
                 "outcome": "no_changes",
                 "error": (
-                    "CloudFormation rejected the update: no changes detected in the template. "
-                    "Your file edit did not modify any CloudFormation resource properties. "
-                    "Check that you edited faulted.yaml (not just Lambda handler code) "
-                    "if the fault is in a resource configuration."
+                    "CloudFormation rejected the update: no changes detected. "
+                    "Your edits did not produce any diff in the deployed template or Lambda code. "
+                    "Verify your write_file call changed the correct file and property."
                 ),
             }
         raise
