@@ -395,6 +395,9 @@ async def run_agent_loop(
                         timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
                     )
 
+                if name == "submit_fix":
+                    print(f"\n[submit_fix]\n{content}\n", flush=True)
+
                 tool_results.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
