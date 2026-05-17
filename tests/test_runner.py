@@ -9,8 +9,8 @@ import pytest
 from botocore.exceptions import ClientError, WaiterError
 
 from harness.runner.context_builder import build_context, corpus_dir_for_scenario
-from harness.runner.scenario_runner import ScenarioRunner, _parse_assertion_output
-from harness.shared.types import DeploymentResult
+from harness.runner.scenario_runner import ScenarioRunner
+from harness.shared.types import DeploymentResult, SubmissionState
 
 _FIXED_INSTRUCTION = (
     "A deployed instance of this system is running in your local environment. "
@@ -255,11 +255,11 @@ class TestScenarioRunner:
             return_value=DeploymentResult(outcome="deploy_success"),
         )
         runner = ScenarioRunner(scenario_dir, "run-test-1")
-        result1 = runner.on_model_redeploy()
-        result2 = runner.on_model_redeploy()
+        result1 = runner.deploy(is_initial=True)
+        result2 = runner.deploy(is_initial=True)
         assert result1.outcome == "deploy_success"
         assert result2.outcome == "unknown"
-        assert result2.error == "already_submitted"
+        assert "Already submitted" in result2.error
         assert mock_handle.call_count == 1
 
     def test_intercept_tool_call_increments_count_and_logs(self, tmp_path, mocker):
@@ -276,7 +276,7 @@ class TestScenarioRunner:
         assert first_call_args.args[2] == "ace_invoke_lambda"
 
 
-def test_attempt_deployment_returns_success_dict(tmp_path, mocker):
+def test_deploy_initial_returns_success(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
@@ -284,12 +284,13 @@ def test_attempt_deployment_returns_success_dict(tmp_path, mocker):
         "harness.runner.scenario_runner.handle_submission",
         return_value=DeploymentResult(outcome="deploy_success"),
     )
-    result = runner.attempt_deployment()
+    result = runner.deploy(is_initial=True)
     assert result.success is True
     assert runner.submitted is True
+    assert runner.submission_state.deploy_attempts == 1
 
 
-def test_attempt_deployment_returns_failure_dict_on_no_changes(tmp_path, mocker):
+def test_deploy_initial_returns_failure_on_no_changes(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
@@ -297,22 +298,18 @@ def test_attempt_deployment_returns_failure_dict_on_no_changes(tmp_path, mocker)
         "harness.runner.scenario_runner.handle_submission",
         return_value=DeploymentResult(outcome="no_changes", error="no changes detected"),
     )
-    result = runner.attempt_deployment()
+    result = runner.deploy(is_initial=True)
     assert result.success is False
     assert runner.submitted is False
     assert "no changes" in result.error
 
 
-def test_attempt_deployment_blocked_after_success(tmp_path, mocker):
+def test_deploy_initial_locked_after_success(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
-    mocker.patch(
-        "harness.runner.scenario_runner.handle_submission",
-        return_value=DeploymentResult(outcome="deploy_success"),
-    )
-    runner.attempt_deployment()
-    result = runner.attempt_deployment()
+    runner.submission_state.submitted = True
+    result = runner.deploy(is_initial=True)
     assert result.success is False
     assert "Already submitted" in result.error
 
@@ -338,58 +335,6 @@ def test_corpus_dir_for_scenario_raises_on_bad_name(tmp_path):
     (tmp_path / "corpus").mkdir(parents=True)
     with pytest.raises(ValueError, match="Cannot parse arch number"):
         corpus_dir_for_scenario(bad, corpus_root=tmp_path / "corpus")
-
-
-def test_parse_assertion_output_all_passing():
-    output = (
-        "ASSERT pass test_friend_request: ok\n"
-        "ASSERT pass test_read_list: ok\n"
-    )
-    result = _parse_assertion_output(output)
-    assert result["all_passed"] is True
-    assert len(result["passed"]) == 2
-    assert len(result["failed"]) == 0
-    assert result["passed"][0]["name"] == "test_friend_request"
-
-def test_parse_assertion_output_with_failures():
-    output = (
-        "ASSERT pass test_friend_request: ok\n"
-        "ASSERT fail test_accept_state: state 'Requested' != 'Friends'\n"
-    )
-    result = _parse_assertion_output(output)
-    assert result["all_passed"] is False
-    assert len(result["passed"]) == 1
-    assert len(result["failed"]) == 1
-    assert result["failed"][0]["name"] == "test_accept_state"
-    assert "Requested" in result["failed"][0]["short_error"]
-
-def test_parse_assertion_output_secondary_failure_not_fatal():
-    # _secondary failures are tracked but don't make `all_passed` False.
-    output = (
-        "ASSERT pass test_primary: ok\n"
-        "ASSERT fail test_optional_secondary: minor regression\n"
-    )
-    result = _parse_assertion_output(output)
-    assert result["all_passed"] is True
-    assert len(result["failed"]) == 1
-
-
-def test_parse_assertion_output_zero_assertions_is_failure():
-    # Functional test crashed before emitting any ASSERT line.
-    # This must NOT be treated as success — it means nothing ran.
-    output = "Traceback (most recent call last):\n  ImportError: boto3\n"
-    result = _parse_assertion_output(output)
-    assert result["all_passed"] is False
-    assert len(result["failed"]) == 1
-    assert result["failed"][0]["name"] == "__no_assertions__"
-    assert "no assert" in result["failed"][0]["short_error"].lower()
-
-
-def test_parse_assertion_output_empty_output_is_failure():
-    result = _parse_assertion_output("")
-    assert result["all_passed"] is False
-    assert len(result["failed"]) == 1
-    assert result["failed"][0]["name"] == "__no_assertions__"
 
 
 def test_handle_submission_reports_skipped_lambda_files(tmp_path, mocker):
@@ -463,9 +408,9 @@ def test_run_functional_tests_nonzero_exit_is_failure(tmp_path, mocker):
         ),
     )
     result = runner.run_functional_tests()
-    assert result["all_passed"] is False
+    assert result.primary_assertions_passed is False
     # A test that crashed mid-run shouldn't be credited even if some asserts passed.
-    crash_names = [f["name"] for f in result["failed"]]
+    crash_names = [a.name for a in result.failed]
     assert "__test_crashed__" in crash_names
 
 def test_run_functional_tests_calls_subprocess(tmp_path, mocker):
@@ -488,37 +433,39 @@ def test_run_functional_tests_calls_subprocess(tmp_path, mocker):
         ),
     )
     result = runner.run_functional_tests()
-    assert result["all_passed"] is True
-    assert result["passed"][0]["name"] == "test_x"
+    assert result.primary_assertions_passed is True
+    assert result.passed[0].name == "test_x"
 
 
-def test_attempt_redeployment_runs_when_already_submitted(tmp_path, mocker):
+def test_deploy_retry_ignores_submitted_lock(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
-    runner.submitted = True
+    runner.submission_state.submitted = True
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
         return_value=DeploymentResult(outcome="deploy_success"),
     )
-    result = runner.attempt_redeployment()
+    result = runner.deploy(is_initial=False)
     assert result.success is True
-    assert runner.submitted is True  # unchanged
+    assert runner.submission_state.submitted is True  # unchanged
 
-def test_attempt_redeployment_never_sets_submitted_on_success(tmp_path, mocker):
+
+def test_deploy_retry_does_not_set_submitted_on_success(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
-    runner.submitted = False
+    runner.submission_state.submitted = False
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
         return_value=DeploymentResult(outcome="deploy_success"),
     )
-    result = runner.attempt_redeployment()
+    result = runner.deploy(is_initial=False)
     assert result.success is True
-    assert runner.submitted is False  # not touched
+    assert runner.submission_state.submitted is False  # not touched by retry
 
-def test_attempt_redeployment_returns_failure_dict(tmp_path, mocker):
+
+def test_deploy_retry_returns_failure_on_no_changes(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
@@ -526,32 +473,74 @@ def test_attempt_redeployment_returns_failure_dict(tmp_path, mocker):
         "harness.runner.scenario_runner.handle_submission",
         return_value=DeploymentResult(outcome="no_changes", error="no changes detected"),
     )
-    result = runner.attempt_redeployment()
+    result = runner.deploy(is_initial=False)
     assert result.success is False
     assert "no changes" in result.error
 
 
-def test_attempt_redeployment_updates_last_deployment_outcome(tmp_path, mocker):
+def test_deploy_updates_last_outcome(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
-    runner._last_deployment_outcome = "deploy_success"  # from earlier attempt
+    runner.submission_state.last_outcome = "deploy_success"
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
         return_value=DeploymentResult(outcome="deploy_fail"),
     )
-    runner.attempt_redeployment()
+    runner.deploy(is_initial=False)
     assert runner._last_deployment_outcome == "deploy_fail"
 
 
-def test_attempt_redeployment_updates_outcome_on_success(tmp_path, mocker):
+def test_deploy_initial_locks_submitted_on_success(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
-    runner = ScenarioRunner(str(tmp_path), "run-xyz")
-    runner._last_deployment_outcome = "deploy_fail"
+    runner = ScenarioRunner(str(tmp_path), "run-1")
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
         return_value=DeploymentResult(outcome="deploy_success"),
     )
-    runner.attempt_redeployment()
-    assert runner._last_deployment_outcome == "deploy_success"
+    r = runner.deploy(is_initial=True)
+    assert r.success
+    assert runner.submission_state.submitted is True
+    assert runner.submission_state.last_outcome == "deploy_success"
+    assert runner.submission_state.deploy_attempts == 1
+
+
+def test_deploy_initial_blocked_after_success(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-2")
+    runner.submission_state.submitted = True
+    r = runner.deploy(is_initial=True)
+    assert r.success is False
+    assert r.outcome == "unknown"
+    assert "Already submitted" in r.error
+
+
+def test_deploy_retry_does_not_check_submitted(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-3")
+    runner.submission_state.submitted = True  # earlier success
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value=DeploymentResult(outcome="deploy_fail"),
+    )
+    r = runner.deploy(is_initial=False)
+    assert r.outcome == "deploy_fail"
+    assert runner.submission_state.last_outcome == "deploy_fail"
+    assert runner.submission_state.deploy_attempts == 1
+
+
+def test_deploy_increments_attempt_counter(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-4")
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value=DeploymentResult(outcome="deploy_fail"),
+    )
+    runner.deploy(is_initial=True)
+    runner.deploy(is_initial=False)
+    runner.deploy(is_initial=False)
+    assert runner.submission_state.deploy_attempts == 3

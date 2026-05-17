@@ -21,7 +21,7 @@ from harness.shared import assertion_parser
 from harness.shared.file_differ import snapshot
 from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import init_run, log_tool_call
-from harness.shared.types import AssertionRunResult, DeploymentResult
+from harness.shared.types import AssertionRunResult, DeploymentResult, SubmissionState
 
 
 class ScenarioRunner:
@@ -30,8 +30,7 @@ class ScenarioRunner:
         self.run_id = run_id
         self.deployment_dir = os.path.join(self.scenario_dir, "deployment")
         self.tool_call_count = 0
-        self.submitted = False
-        self._last_deployment_outcome: str = "unknown"
+        self.submission_state = SubmissionState()
         self._lock = threading.Lock()
 
         scenario_id = os.path.basename(self.scenario_dir)
@@ -162,45 +161,41 @@ class ScenarioRunner:
             json_path=results_path,
         )
 
-    def on_model_redeploy(self) -> DeploymentResult:
-        with self._lock:
-            if self.submitted:
-                # Signal "already submitted" by returning an unknown-outcome result.
-                # Callers don't use on_model_redeploy after submit; this is defensive.
-                return DeploymentResult(outcome="unknown", error="already_submitted")
-            self.submitted = True
-        try:
-            result = handle_submission(
-                self.scenario_dir, self.run_id,
-                self.start_snapshot, self.start_faulted_yaml,
-            )
-        except Exception:
-            self._last_deployment_outcome = "error"
-            raise
-        self._last_deployment_outcome = result.outcome
-        return result
+    def deploy(self, *, is_initial: bool = False) -> DeploymentResult:
+        """Single submission entry point — replaces attempt_deployment /
+        attempt_redeployment / on_model_redeploy.
 
-    def attempt_deployment(self) -> DeploymentResult:
+        is_initial=True: the first submit of the scenario. Locks submitted on
+            success and refuses if already locked.
+        is_initial=False: a retry after a failed deploy or failed tests. Does
+            not check the submitted lock and does not toggle it.
+        """
         with self._lock:
-            if self.submitted:
-                return DeploymentResult(
-                    outcome="unknown",
-                    error="Already submitted (final).",
-                )
+            if is_initial and self.submission_state.submitted:
+                return DeploymentResult(outcome="unknown", error="Already submitted (final).")
         result = handle_submission(
             self.scenario_dir, self.run_id,
             self.start_snapshot, self.start_faulted_yaml,
         )
-        if result.success:
+        self.submission_state.deploy_attempts += 1
+        self.submission_state.last_outcome = result.outcome
+        if is_initial and result.success:
             with self._lock:
-                self.submitted = True
-        self._last_deployment_outcome = result.outcome
+                self.submission_state.submitted = True
         return result
 
-    def attempt_redeployment(self) -> DeploymentResult:
-        result = handle_submission(
-            self.scenario_dir, self.run_id,
-            self.start_snapshot, self.start_faulted_yaml,
-        )
-        self._last_deployment_outcome = result.outcome
-        return result
+    @property
+    def submitted(self) -> bool:
+        return self.submission_state.submitted
+
+    @submitted.setter
+    def submitted(self, v: bool) -> None:
+        self.submission_state.submitted = v
+
+    @property
+    def _last_deployment_outcome(self) -> str:
+        return self.submission_state.last_outcome
+
+    @_last_deployment_outcome.setter
+    def _last_deployment_outcome(self, v: str) -> None:
+        self.submission_state.last_outcome = v

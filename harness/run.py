@@ -17,6 +17,7 @@ from harness.shared.result_logger import log_verify_result
 from harness.runner.context_builder import build_context
 from harness.runner.scenario_runner import ScenarioRunner
 from harness.scoring.scorer import score_run
+from harness.scoring.agent import SCORING_MODEL
 from harness.verify.pass1_functional import run_pass1
 from harness.verify.verify_loop import run_verify_loop
 
@@ -110,11 +111,33 @@ def _print_summary(run_id: str, scenario_id: str, verify_result: dict, runner: "
     print()
 
 
+def _format_scorer_label(model: str) -> str:
+    """Make the scorer banner reflect the actual SCORING_MODEL (litellm id).
+
+    Examples: 'gpt-4o' -> 'GPT-4o', 'anthropic/claude-sonnet-4-6' -> 'Claude Sonnet 4.6',
+    'ollama/llama3' -> 'Llama3'. Falls back to the raw model id.
+    """
+    if not model:
+        return "scorer"
+    raw = model.split("/", 1)[1] if "/" in model else model
+    lower = raw.lower()
+    if lower.startswith("gpt-"):
+        return "GPT-" + raw[4:]
+    if "claude" in lower:
+        pretty = raw.replace("claude-", "Claude ").replace("-", " ")
+        return pretty.title().replace("Sonnet", "Sonnet").replace("Opus", "Opus").replace("Haiku", "Haiku")
+    if "gemini" in lower:
+        return raw.replace("gemini-", "Gemini ").title()
+    return raw
+
+
 def _print_score_summary(score: dict) -> None:
+    scorer_label = _format_scorer_label(score.get("scored_by") or SCORING_MODEL)
+    banner = f"── Scoring ({scorer_label}) ─────────────"
     dims = score.get("dimensions", {})
     if not dims:
         gate_str = "FAIL → score zeroed" if not score.get("quality_threshold_met") else "N/A"
-        print("── Scoring (Claude Sonnet) ─────────────")
+        print(banner)
         print(f"Quality gate:     {gate_str}")
         print(f"Zero reason:      {score.get('zero_reason', 'unknown')}")
         print(f"Final score:      {score.get('final_score', 0.0):.4f}")
@@ -128,7 +151,7 @@ def _print_score_summary(score: dict) -> None:
     d4 = dims.get("efficiency", {})
     d5 = dims.get("quality", {})
 
-    print("── Scoring (Claude Sonnet) ─────────────")
+    print(banner)
     print(f"Quality gate:     {'PASS' if score.get('quality_threshold_met') else 'FAIL → score zeroed'}")
     print(f"Identification:   {d1.get('score', 0):.2f}  {d1.get('rationale', '')}")
     print(f"Fix correctness:  {d2.get('score', 0):.2f}  {d2.get('rationale', '')}")
@@ -286,7 +309,7 @@ def main() -> None:
     _baseline = run_pass1(corpus_dir)
     _baseline_path = os.path.join("results", run_id, "faulted_baseline.json")
     with open(_baseline_path, "w") as _f:
-        json.dump(_baseline, _f, indent=2)
+        json.dump(_baseline.to_baseline_dict(), _f, indent=2)
 
     # Step 6 — build context (raises ValueError if fault_manifest.json is readable in scenario_dir)
     # Temporarily rename manifest so build_context does not raise.
@@ -323,8 +346,8 @@ def main() -> None:
                     run_id=run_id,
                     harness_api_key=_harness_key,
                     verbose=args.verbose,
-                    deploy_callback=runner.attempt_deployment,
-                    redeploy_callback=runner.attempt_redeployment,
+                    deploy_callback=lambda: runner.deploy(is_initial=True),
+                    redeploy_callback=lambda: runner.deploy(is_initial=False),
                     verify_callback=runner.run_functional_tests,
                     max_test_retries=5,
                 )

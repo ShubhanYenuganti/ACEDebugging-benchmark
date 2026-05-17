@@ -67,6 +67,14 @@ class DeploymentResult:
 
 
 @dataclass
+class SubmissionState:
+    """Persistent state across submit_fix attempts within one scenario run."""
+    submitted: bool = False
+    last_outcome: DeploymentOutcome = "unknown"
+    deploy_attempts: int = 0
+
+
+@dataclass
 class AssertionResult:
     """One ASSERT line from functional_test.py."""
     name: str
@@ -112,3 +120,24 @@ class AssertionRunResult:
     @property
     def assertions_by_name(self) -> dict[str, AssertionResult]:
         return {a.name: a for a in self.assertions}
+
+    @property
+    def all_passed(self) -> bool:
+        """Agent-loop alias: True iff no primary failures (mirrors old dict shape)."""
+        return self.primary_assertions_passed
+
+    def to_baseline_dict(self) -> dict:
+        """Snapshot shape for results/<run>/faulted_baseline.json.
+
+        Pass2 reads this file from disk, so the on-disk format is part of the
+        contract. Keep this writer and the pass2 reader together.
+        """
+        return {
+            "assertions": {
+                a.name: {"result": a.verdict, "message": a.message}
+                for a in self.assertions
+            },
+            "primary_assertions_passed": self.primary_assertions_passed,
+            "all_assertions_passed": self.all_assertions_passed,
+            "failed_assertion_names": self.all_failed_names,
+        }
