@@ -2,14 +2,15 @@ import json
 import os
 
 from harness.shared.result_logger import log_verify_result
-from harness.verify.pass1_functional import run_pass1
-from harness.verify.pass2_regression import run_pass2
-from harness.verify.pass3_classification import run_pass3
-from harness.verify.pass4_concurrency import run_pass4
-
-RESULTS_DIR = "results"
-
-_CONCURRENCY_CLASSES = {"performance", "reliability"}
+from harness.verify.pass1_functional import Pass1Step
+from harness.verify.pass2_regression import Pass2Step
+from harness.verify.pass3_classification import Pass3Step
+from harness.verify.pass4_concurrency import Pass4Step
+from harness.verify.pipeline import (
+    VerifyContext,
+    downgrade_pass3_when_pass4_fails,
+    run_pipeline,
+)
 
 
 def run_verify_loop(
@@ -31,28 +32,24 @@ def run_verify_loop(
         log_verify_result(run_id, result)
         return result
 
-    pass1 = run_pass1(corpus_dir or scenario_dir)
-    pass2 = run_pass2(scenario_dir, run_id, pass1)
-    pass3 = run_pass3(scenario_dir, run_id, pass1, manifest_path)
-
-    pass4 = None
+    fault_class = None
     if manifest_path and os.path.isfile(manifest_path):
         with open(manifest_path, "r", encoding="utf-8") as f:
-            manifest = json.load(f)
-        if manifest.get("fault_class") in _CONCURRENCY_CLASSES:
-            pass4 = run_pass4(scenario_dir, manifest_path, api_endpoint or "")
-            # Override rule: Pass 4 failure downgrades Pass 3 to "partial"
-            if not pass4["passed"] and pass1["primary_assertions_passed"]:
-                pass3 = dict(pass3)
-                pass3["classification"] = "partial"
-                pass3["root_cause_addressed"] = False
+            fault_class = json.load(f).get("fault_class")
 
-    result = {
-        "outcome": "completed",
-        "pass1_functional": pass1,
-        "pass2_regression": pass2,
-        "pass3_classification": pass3,
-        "pass4_concurrency": pass4,
-    }
+    ctx = VerifyContext(
+        scenario_dir=scenario_dir,
+        run_id=run_id,
+        manifest_path=manifest_path,
+        corpus_dir=corpus_dir or scenario_dir,
+        api_endpoint=api_endpoint or "",
+        fault_class=fault_class,
+    )
+    results = run_pipeline(
+        ctx,
+        steps=[Pass1Step(), Pass2Step(), Pass3Step(), Pass4Step()],
+        postprocessors=[downgrade_pass3_when_pass4_fails],
+    )
+    result = {"outcome": "completed", **results}
     log_verify_result(run_id, result)
     return result

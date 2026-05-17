@@ -416,6 +416,10 @@ class TestPass4Concurrency:
         assert result["requests_sent"] == 10
 
 
+import harness.verify.pass1_functional as p1mod
+import harness.verify.pass2_regression as p2mod
+import harness.verify.pass3_classification as p3mod
+import harness.verify.pass4_concurrency as p4mod
 import harness.verify.verify_loop as vlmod
 from harness.verify.verify_loop import run_verify_loop
 
@@ -432,9 +436,6 @@ class TestVerifyLoop:
         (run_dir / "faulted_baseline.json").write_text(json.dumps(baseline))
 
     def test_did_not_deploy_skips_all_passes(self, tmp_path, monkeypatch):
-        results_dir = str(tmp_path / "results")
-        self._write_baseline(results_dir, "run-v1", {})
-        monkeypatch.setattr(vlmod, "RESULTS_DIR", results_dir)
         monkeypatch.setattr(vlmod, "log_verify_result", lambda *a, **kw: None)
         result = run_verify_loop("scenario", "run-v1", deployment_outcome="lint_fail")
         assert result["outcome"] == "did_not_deploy"
@@ -444,9 +445,6 @@ class TestVerifyLoop:
         assert result["pass4_concurrency"] is None
 
     def test_pass4_skipped_for_non_performance_fault_class(self, tmp_path, monkeypatch):
-        results_dir = str(tmp_path / "results")
-        self._write_baseline(results_dir, "run-v2", {"check_a": "fail"})
-        monkeypatch.setattr(vlmod, "RESULTS_DIR", results_dir)
         monkeypatch.setattr(vlmod, "log_verify_result", lambda *a, **kw: None)
         pass1 = AssertionRunResult(assertions=[
             AssertionResult(name="check_a", verdict="pass", message=""),
@@ -463,9 +461,9 @@ class TestVerifyLoop:
             "classification": "root_cause",
             "root_cause_addressed": True,
         }
-        monkeypatch.setattr(vlmod, "run_pass1", lambda *a, **kw: pass1)
-        monkeypatch.setattr(vlmod, "run_pass2", lambda *a, **kw: pass2)
-        monkeypatch.setattr(vlmod, "run_pass3", lambda *a, **kw: pass3)
+        monkeypatch.setattr(p1mod, "run_pass1", lambda *a, **kw: pass1)
+        monkeypatch.setattr(p2mod, "run_pass2", lambda *a, **kw: pass2)
+        monkeypatch.setattr(p3mod, "run_pass3", lambda *a, **kw: pass3)
         manifest_path = str(tmp_path / "manifest.json")
         Path(manifest_path).write_text(json.dumps({"fault_class": "config"}))
         result = run_verify_loop(
@@ -479,9 +477,6 @@ class TestVerifyLoop:
         assert result["pass4_concurrency"] is None
 
     def test_pass4_failure_overrides_pass3_to_partial(self, tmp_path, monkeypatch):
-        results_dir = str(tmp_path / "results")
-        self._write_baseline(results_dir, "run-v3", {"check_a": "fail"})
-        monkeypatch.setattr(vlmod, "RESULTS_DIR", results_dir)
         monkeypatch.setattr(vlmod, "log_verify_result", lambda *a, **kw: None)
         pass1 = AssertionRunResult(assertions=[
             AssertionResult(name="check_a", verdict="pass", message=""),
@@ -506,10 +501,10 @@ class TestVerifyLoop:
             "error_count": 0,
             "passed": False,
         }
-        monkeypatch.setattr(vlmod, "run_pass1", lambda *a, **kw: pass1)
-        monkeypatch.setattr(vlmod, "run_pass2", lambda *a, **kw: pass2)
-        monkeypatch.setattr(vlmod, "run_pass3", lambda *a, **kw: pass3)
-        monkeypatch.setattr(vlmod, "run_pass4", lambda *a, **kw: pass4)
+        monkeypatch.setattr(p1mod, "run_pass1", lambda *a, **kw: pass1)
+        monkeypatch.setattr(p2mod, "run_pass2", lambda *a, **kw: pass2)
+        monkeypatch.setattr(p3mod, "run_pass3", lambda *a, **kw: pass3)
+        monkeypatch.setattr(p4mod, "run_pass4", lambda *a, **kw: pass4)
         manifest_path = str(tmp_path / "manifest.json")
         Path(manifest_path).write_text(
             json.dumps({"fault_class": "reliability", "concurrency_probe_n": 10})
@@ -524,3 +519,44 @@ class TestVerifyLoop:
         )
         assert result["pass3_classification"]["classification"] == "partial"
         assert result["pass4_concurrency"]["passed"] is False
+
+
+def test_pipeline_skips_step_when_should_run_false():
+    from harness.verify.pipeline import VerifyContext, run_pipeline
+
+    class AlwaysSkipStep:
+        name = "skipper"
+        def should_run(self, ctx): return False
+        def run(self, ctx): raise AssertionError("should not run")
+
+    class AlwaysRunStep:
+        name = "runner"
+        def should_run(self, ctx): return True
+        def run(self, ctx): return {"done": True}
+
+    ctx = VerifyContext(
+        scenario_dir="", run_id="", manifest_path=None,
+        corpus_dir="", api_endpoint="",
+    )
+    results = run_pipeline(ctx, steps=[AlwaysSkipStep(), AlwaysRunStep()], postprocessors=[])
+    assert results["skipper"] is None
+    assert results["runner"] == {"done": True}
+
+
+def test_pipeline_postprocessor_mutates_results():
+    from harness.verify.pipeline import VerifyContext, run_pipeline
+
+    class StepA:
+        name = "a"
+        def should_run(self, ctx): return True
+        def run(self, ctx): return {"x": 1}
+
+    def double_x(ctx):
+        ctx.results["a"]["x"] *= 2
+
+    ctx = VerifyContext(
+        scenario_dir="", run_id="", manifest_path=None,
+        corpus_dir="", api_endpoint="",
+    )
+    results = run_pipeline(ctx, steps=[StepA()], postprocessors=[double_x])
+    assert results["a"]["x"] == 2

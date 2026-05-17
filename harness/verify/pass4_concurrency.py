@@ -5,6 +5,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
 
+class Pass4Step:
+    name = "pass4_concurrency"
+
+    def should_run(self, ctx) -> bool:
+        return ctx.fault_class in {"performance", "reliability"} and bool(ctx.api_endpoint)
+
+    def run(self, ctx):
+        return run_pass4(ctx.scenario_dir, ctx.manifest_path, ctx.api_endpoint)
+
+
 def run_pass4(scenario_dir: str, manifest_path: str, api_endpoint: str) -> dict:
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)

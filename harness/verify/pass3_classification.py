@@ -4,6 +4,8 @@ import re
 
 import yaml
 
+from harness.shared.types import AssertionRunResult
+
 RESULTS_DIR = "results"
 
 # CloudFormation YAML uses !Sub, !Ref, !GetAtt etc. Register no-op constructors
@@ -49,8 +51,18 @@ def _navigate(data, dot_path: str):
     return node
 
 
+class Pass3Step:
+    name = "pass3_classification"
+
+    def should_run(self, ctx) -> bool:
+        return ctx.pass1_result is not None and bool(ctx.manifest_path)
+
+    def run(self, ctx):
+        return run_pass3(ctx.scenario_dir, ctx.run_id, ctx.pass1_result, ctx.manifest_path)
+
+
 def run_pass3(
-    scenario_dir: str, run_id: str, pass1_result: dict, manifest_path: str
+    scenario_dir: str, run_id: str, pass1_result: AssertionRunResult, manifest_path: str
 ) -> dict:
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
@@ -86,15 +98,15 @@ def run_pass3(
 
     invalid_patch_detected = any(p in diff_text for p in invalid_patches)
 
-    primary_passed = pass1_result.get("primary_assertions_passed", False)
-    assertions = pass1_result.get("assertions", {})
+    primary_passed = pass1_result.primary_assertions_passed
+    assertions = pass1_result.assertions_by_name
 
     if structural_match and not invalid_patch_detected:
         classification = "root_cause"
     elif primary_passed and not structural_match:
         classification = "workaround"
     elif not primary_passed:
-        any_improvement = any(v["result"] == "pass" for v in assertions.values())
+        any_improvement = any(a.verdict == "pass" for a in assertions.values())
         classification = "partial" if any_improvement else "none"
     else:
         classification = "none"
