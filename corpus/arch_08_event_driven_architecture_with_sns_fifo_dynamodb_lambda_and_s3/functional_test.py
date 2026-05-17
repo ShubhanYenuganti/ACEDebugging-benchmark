@@ -17,15 +17,13 @@ import uuid
 
 import boto3
 
+from harness.shared.functional_test_helpers import emit_fail, emit_pass, finalize
+
 ENDPOINT = "http://localhost:4566"
 REGION = "us-east-1"
 CREDS = {"aws_access_key_id": "test", "aws_secret_access_key": "test"}
 STACK_NAME = "ace-bench-stack"
 WAIT_TIMEOUT_SECONDS = 120
-
-
-def emit(result, name, message=""):
-    print(f"ASSERT {result} {name}: {message}", flush=True)
 
 
 def client(service):
@@ -75,9 +73,9 @@ def wait_until(predicate):
 def assert_events_published(function_name, job_id):
     status, payload = invoke_producer(function_name, job_id)
     if status == 200 and payload.get("jobId") == job_id:
-        emit("pass", "events_published", "producer accepted test job and published events")
+        emit_pass("events_published", "producer accepted test job and published events")
     else:
-        emit("fail", "events_published", f"status={status}, payload={payload}")
+        emit_fail("events_published", f"status={status}, payload={payload}")
 
 
 def assert_analytics_object_created(bucket_name):
@@ -87,9 +85,9 @@ def assert_analytics_object_created(bucket_name):
 
     ok, objects = wait_until(_check)
     if ok:
-        emit("pass", "analytics_object_created", f"objects={len(objects)}")
+        emit_pass("analytics_object_created", f"objects={len(objects)}")
     else:
-        emit("fail", "analytics_object_created", f"objects={objects}")
+        emit_fail("analytics_object_created", f"objects={objects}")
 
 
 def assert_inventory_terminal_state(table_name, job_id):
@@ -100,22 +98,25 @@ def assert_inventory_terminal_state(table_name, job_id):
 
     ok, item = wait_until(_check)
     if ok:
-        emit("pass", "inventory_terminal_state", "job item exists and is marked deleted")
+        emit_pass("inventory_terminal_state", "job item exists and is marked deleted")
     else:
-        emit("fail", "inventory_terminal_state", f"item={item}")
+        emit_fail("inventory_terminal_state", f"item={item}")
 
 
 def assert_table_active_secondary(table_name):
     status = client("dynamodb").describe_table(TableName=table_name)["Table"]["TableStatus"]
-    emit("pass" if status == "ACTIVE" else "fail", "table_active_secondary", f"status={status}")
+    if status == "ACTIVE":
+        emit_pass("table_active_secondary", f"status={status}")
+    else:
+        emit_fail("table_active_secondary", f"status={status}")
 
 
 def assert_bucket_exists_secondary(bucket_name):
     try:
         client("s3").head_bucket(Bucket=bucket_name)
-        emit("pass", "analytics_bucket_exists_secondary", f"bucket={bucket_name}")
+        emit_pass("analytics_bucket_exists_secondary", f"bucket={bucket_name}")
     except Exception as exc:  # pylint: disable=broad-except
-        emit("fail", "analytics_bucket_exists_secondary", str(exc))
+        emit_fail("analytics_bucket_exists_secondary", str(exc))
 
 
 def assert_event_sources_enabled_secondary(function_names):
@@ -126,9 +127,9 @@ def assert_event_sources_enabled_secondary(function_names):
         if not any(mapping.get("State") in {"Enabled", "Enabling"} for mapping in mappings):
             missing.append(name)
     if missing:
-        emit("fail", "event_sources_enabled_secondary", f"missing={missing}")
+        emit_fail("event_sources_enabled_secondary", f"missing={missing}")
     else:
-        emit("pass", "event_sources_enabled_secondary", "SQS event source mappings are enabled")
+        emit_pass("event_sources_enabled_secondary", "SQS event source mappings are enabled")
 
 
 if __name__ == "__main__":
@@ -146,6 +147,7 @@ if __name__ == "__main__":
         assert_bucket_exists_secondary(bucket)
         assert_event_sources_enabled_secondary([inventory_function])
     except Exception as exc:  # pylint: disable=broad-except
-        emit("fail", "test_harness_exception", str(exc))
+        emit_fail("test_harness_exception", str(exc))
 
+    finalize()
     sys.exit(0)

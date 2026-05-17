@@ -18,15 +18,13 @@ from urllib import error, request
 
 import boto3
 
+from harness.shared.functional_test_helpers import emit_fail, emit_pass, finalize
+
 ENDPOINT = "http://localhost:4566"
 REGION = "us-east-1"
 CREDS = {"aws_access_key_id": "test", "aws_secret_access_key": "test"}
 STACK_NAME = "ace-bench-stack"
 WAIT_TIMEOUT_SECONDS = 120
-
-
-def emit(result, name, message=""):
-    print(f"ASSERT {result} {name}: {message}", flush=True)
 
 
 def client(service):
@@ -105,16 +103,16 @@ def api_candidates(api_url, api_id, path):
 def assert_request_record_written(queue_url, table_name, player_id, friend_id):
     send_friend_action(queue_url, player_id, friend_id, "Request")
     if wait_for_state(table_name, player_id, friend_id, "Requested"):
-        emit("pass", "request_record_written", "requester-side item reached Requested")
+        emit_pass("request_record_written", "requester-side item reached Requested")
     else:
-        emit("fail", "request_record_written", "requester-side item did not reach Requested")
+        emit_fail("request_record_written", "requester-side item did not reach Requested")
 
 
 def assert_pending_record_created(table_name, player_id, friend_id):
     if wait_for_state(table_name, friend_id, player_id, "Pending"):
-        emit("pass", "pending_record_created", "receiver-side item reached Pending")
+        emit_pass("pending_record_created", "receiver-side item reached Pending")
     else:
-        emit("fail", "pending_record_created", "receiver-side item did not reach Pending")
+        emit_fail("pending_record_created", "receiver-side item did not reach Pending")
 
 
 def assert_accept_terminal_state(queue_url, table_name, player_id, friend_id):
@@ -122,10 +120,9 @@ def assert_accept_terminal_state(queue_url, table_name, player_id, friend_id):
     receiver_ok = wait_for_state(table_name, friend_id, player_id, "Friends")
     requester_ok = wait_for_state(table_name, player_id, friend_id, "Friends")
     if receiver_ok and requester_ok:
-        emit("pass", "accept_terminal_state", "both relationship records reached Friends")
+        emit_pass("accept_terminal_state", "both relationship records reached Friends")
     else:
-        emit(
-            "fail",
+        emit_fail(
             "accept_terminal_state",
             f"receiver_ok={receiver_ok}, requester_ok={requester_ok}",
         )
@@ -142,18 +139,18 @@ def assert_read_api_terminal_state(api_url, api_id, player_id, friend_id):
         if status == 200 and isinstance(payload, list):
             for item in payload:
                 if item.get("friend_id") == friend_id and item.get("state") == "Friends":
-                    emit("pass", "read_api_terminal_state", "read API returned terminal friendship")
+                    emit_pass("read_api_terminal_state", "read API returned terminal friendship")
                     return
-    emit("fail", "read_api_terminal_state", f"status={last_status}, payload={last_payload}")
+    emit_fail("read_api_terminal_state", f"status={last_status}, payload={last_payload}")
 
 
 def assert_table_active_secondary(table_name):
     ddb = client("dynamodb")
     status = ddb.describe_table(TableName=table_name)["Table"]["TableStatus"]
     if status == "ACTIVE":
-        emit("pass", "table_active_secondary", f"status={status}")
+        emit_pass("table_active_secondary", f"status={status}")
     else:
-        emit("fail", "table_active_secondary", f"status={status}")
+        emit_fail("table_active_secondary", f"status={status}")
 
 
 def assert_queue_mapping_enabled_secondary(front_handler_name, queue_arn):
@@ -165,9 +162,9 @@ def assert_queue_mapping_enabled_secondary(front_handler_name, queue_arn):
         if mapping.get("EventSourceArn") == queue_arn and mapping.get("State") in {"Enabled", "Enabling"}
     ]
     if enabled:
-        emit("pass", "queue_mapping_enabled_secondary", "front queue event source mapping is enabled")
+        emit_pass("queue_mapping_enabled_secondary", "front queue event source mapping is enabled")
     else:
-        emit("fail", "queue_mapping_enabled_secondary", "front queue event source mapping is not enabled")
+        emit_fail("queue_mapping_enabled_secondary", "front queue event source mapping is not enabled")
 
 
 def assert_stream_mappings_enabled_secondary(function_names, table_stream_arn):
@@ -183,9 +180,9 @@ def assert_stream_mappings_enabled_secondary(function_names, table_stream_arn):
         if not match:
             missing.append(function_name)
     if not missing:
-        emit("pass", "stream_mappings_enabled_secondary", "DynamoDB stream mappings are enabled")
+        emit_pass("stream_mappings_enabled_secondary", "DynamoDB stream mappings are enabled")
     else:
-        emit("fail", "stream_mappings_enabled_secondary", f"missing={missing}")
+        emit_fail("stream_mappings_enabled_secondary", f"missing={missing}")
 
 
 if __name__ == "__main__":
@@ -213,6 +210,7 @@ if __name__ == "__main__":
         assert_queue_mapping_enabled_secondary(front_handler_name, queue_arn)
         assert_stream_mappings_enabled_secondary([request_handler_name, accept_handler_name], table_stream_arn)
     except Exception as exc:  # pylint: disable=broad-except
-        emit("fail", "test_harness_exception", str(exc))
+        emit_fail("test_harness_exception", str(exc))
 
+    finalize()
     sys.exit(0)

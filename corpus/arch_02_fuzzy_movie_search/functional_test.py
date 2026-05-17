@@ -18,15 +18,13 @@ from urllib import error, parse, request
 
 import boto3
 
+from harness.shared.functional_test_helpers import emit_fail, emit_pass, finalize
+
 ENDPOINT = "http://localhost:4566"
 REGION = "us-east-1"
 CREDS = {"aws_access_key_id": "test", "aws_secret_access_key": "test"}
 STACK_NAME = "ace-bench-stack"
 WAIT_TIMEOUT_SECONDS = 180
-
-
-def emit(result, name, message=""):
-    print(f"ASSERT {result} {name}: {message}", flush=True)
 
 
 def client(service):
@@ -78,9 +76,9 @@ def assert_ingest_function_accepts_document(ingest_url, movie):
         status, payload = http_request(url, method="POST", payload=movie)
         last = (status, payload)
         if status in {200, 202}:
-            emit("pass", "ingest_function_accepts_document", f"status={status}")
+            emit_pass("ingest_function_accepts_document", f"status={status}")
             return True
-    emit("fail", "ingest_function_accepts_document", f"last={last}")
+    emit_fail("ingest_function_accepts_document", f"last={last}")
     return False
 
 
@@ -118,9 +116,9 @@ def wait_for_elasticsearch_hit(endpoint, title_fragment):
 def assert_document_indexed_in_elasticsearch(endpoint, title):
     found, payload = wait_for_elasticsearch_hit(endpoint, title)
     if found:
-        emit("pass", "document_indexed_in_elasticsearch", "movie document appeared in Elasticsearch")
+        emit_pass("document_indexed_in_elasticsearch", "movie document appeared in Elasticsearch")
     else:
-        emit("fail", "document_indexed_in_elasticsearch", f"last_payload={payload}")
+        emit_fail("document_indexed_in_elasticsearch", f"last_payload={payload}")
 
 
 def assert_search_function_returns_document(search_url, title):
@@ -132,37 +130,37 @@ def assert_search_function_returns_document(search_url, title):
         last = (status, payload)
         if status == 200 and isinstance(payload, list):
             if any(title in item.get("title", "") for item in payload):
-                emit("pass", "search_function_returns_document", "search function returned indexed movie")
+                emit_pass("search_function_returns_document", "search function returned indexed movie")
                 return
         time.sleep(5)
-    emit("fail", "search_function_returns_document", f"last={last}")
+    emit_fail("search_function_returns_document", f"last={last}")
 
 
 def assert_stream_active_secondary(stream_name):
     kinesis = client("kinesis")
     status = kinesis.describe_stream(StreamName=stream_name)["StreamDescription"]["StreamStatus"]
     if status == "ACTIVE":
-        emit("pass", "stream_active_secondary", f"status={status}")
+        emit_pass("stream_active_secondary", f"status={status}")
     else:
-        emit("fail", "stream_active_secondary", f"status={status}")
+        emit_fail("stream_active_secondary", f"status={status}")
 
 
 def assert_firehose_active_secondary(stream_name):
     firehose = client("firehose")
     status = firehose.describe_delivery_stream(DeliveryStreamName=stream_name)["DeliveryStreamDescription"]["DeliveryStreamStatus"]
     if status == "ACTIVE":
-        emit("pass", "firehose_active_secondary", f"status={status}")
+        emit_pass("firehose_active_secondary", f"status={status}")
     else:
-        emit("fail", "firehose_active_secondary", f"status={status}")
+        emit_fail("firehose_active_secondary", f"status={status}")
 
 
 def assert_website_bucket_exists_secondary(bucket_name):
     s3 = client("s3")
     try:
         s3.head_bucket(Bucket=bucket_name)
-        emit("pass", "website_bucket_exists_secondary", f"bucket={bucket_name}")
+        emit_pass("website_bucket_exists_secondary", f"bucket={bucket_name}")
     except Exception as exc:  # pylint: disable=broad-except
-        emit("fail", "website_bucket_exists_secondary", str(exc))
+        emit_fail("website_bucket_exists_secondary", str(exc))
 
 
 if __name__ == "__main__":
@@ -189,13 +187,14 @@ if __name__ == "__main__":
             assert_document_indexed_in_elasticsearch(elasticsearch_endpoint, title)
             assert_search_function_returns_document(search_url, title)
         else:
-            emit("fail", "document_indexed_in_elasticsearch", "ingest setup failed")
-            emit("fail", "search_function_returns_document", "ingest setup failed")
+            emit_fail("document_indexed_in_elasticsearch", "ingest setup failed")
+            emit_fail("search_function_returns_document", "ingest setup failed")
 
         assert_stream_active_secondary(ingest_stream_name)
         assert_firehose_active_secondary(firehose_stream_name)
         assert_website_bucket_exists_secondary(website_bucket_name)
     except Exception as exc:  # pylint: disable=broad-except
-        emit("fail", "test_harness_exception", str(exc))
+        emit_fail("test_harness_exception", str(exc))
 
+    finalize()
     sys.exit(0)

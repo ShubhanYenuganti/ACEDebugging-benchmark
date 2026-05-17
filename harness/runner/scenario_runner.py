@@ -17,50 +17,11 @@ from harness.runner.deployment_handler import (
     handler_to_arcname,
 )
 from harness.runner.context_builder import corpus_dir_for_scenario
+from harness.shared import assertion_parser
 from harness.shared.file_differ import snapshot
 from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import init_run, log_tool_call
-from harness.shared.types import DeploymentResult
-
-
-def _parse_assertion_output(output: str) -> dict:
-    """Parse functional_test.py output.
-
-    Each line follows: `ASSERT pass|fail <name>: <message>`. Primary assertions
-    have no `_secondary` suffix; only their failures fail the run.
-    """
-    passed, failed = [], []
-    for line in output.splitlines():
-        m = re.match(r"ASSERT\s+(pass|fail)\s+(\w+):\s*(.*)", line.strip())
-        if not m:
-            continue
-        verdict, name, message = m.group(1), m.group(2), m.group(3)
-        entry = {"name": name, "description": message}
-        if verdict == "pass":
-            passed.append(entry)
-        else:
-            entry["short_error"] = message
-            failed.append(entry)
-    primary_failed = [t for t in failed if "_secondary" not in t["name"]]
-    if not passed and not failed:
-        # Functional test produced no parseable assertions — almost always a
-        # crashed or mis-configured test. Treat as failure so the agent retries
-        # and the scorer doesn't credit a non-run as success.
-        synthetic = {
-            "name": "__no_assertions__",
-            "description": "functional_test.py emitted no ASSERT lines",
-            "short_error": (
-                "no ASSERT pass|fail lines were produced. The test likely "
-                "crashed before reaching any assertion (import error, "
-                "missing dependency, network error in setup, etc.)."
-            ),
-        }
-        return {"all_passed": False, "passed": [], "failed": [synthetic]}
-    return {
-        "all_passed": len(primary_failed) == 0,
-        "passed": passed,
-        "failed": failed,
-    }
+from harness.shared.types import AssertionRunResult, DeploymentResult
 
 
 class ScenarioRunner:
@@ -178,38 +139,28 @@ class ScenarioRunner:
         timestamp = datetime.datetime.utcnow().isoformat() + "Z"
         log_tool_call(self.run_id, turn, tool_name, input, output, timestamp)
 
-    def run_functional_tests(self) -> dict:
+    def run_functional_tests(self) -> AssertionRunResult:
         corpus_dir = corpus_dir_for_scenario(self.scenario_dir)
         functional_test = corpus_dir / "functional_test.py"
         if not functional_test.exists():
             raise FileNotFoundError(f"functional_test.py not found: {functional_test}")
-        # functional_test.py is a standalone script using the
-        # `ASSERT pass|fail <name>: <message>` protocol — not pytest.
+        results_path = os.path.join(
+            "results", self.run_id, f"functional_results_{int(time.time() * 1000)}.json"
+        )
+        os.makedirs(os.path.dirname(results_path), exist_ok=True)
+        env = {**os.environ, "ACE_BENCH_RESULTS_PATH": os.path.abspath(results_path)}
         proc = subprocess.run(
             [sys.executable, str(functional_test)],
             capture_output=True,
             text=True,
             timeout=120,
+            env=env,
         )
-        parsed = _parse_assertion_output(proc.stdout + "\n" + proc.stderr)
-        if proc.returncode != 0:
-            # Tests that crashed mid-run leave inconsistent state — don't credit.
-            stderr_tail = (
-                proc.stderr.strip().splitlines()[-1]
-                if proc.stderr.strip()
-                else "(empty)"
-            )
-            crash = {
-                "name": "__test_crashed__",
-                "description": f"functional_test.py exited with code {proc.returncode}",
-                "short_error": (
-                    f"test process exited with code {proc.returncode}; "
-                    f"stderr tail: {stderr_tail}"
-                ),
-            }
-            parsed["all_passed"] = False
-            parsed["failed"] = list(parsed.get("failed", [])) + [crash]
-        return parsed
+        return assertion_parser.parse_with_fallback(
+            proc.stdout + "\n" + proc.stderr,
+            returncode=proc.returncode,
+            json_path=results_path,
+        )
 
     def on_model_redeploy(self) -> DeploymentResult:
         with self._lock:
