@@ -1027,3 +1027,65 @@ def test_loop_relays_skipped_lambda_files_in_success_message():
     src = open(loop.__file__).read()
     assert "skipped_lambda_files" in src
     assert "had no matching S3Key" in src
+
+
+# ── Task 3: orphan detection at write_file time ──────────────────────────────
+
+def test_write_file_rejects_orphan_lambda_path(tmp_path):
+    """write_file to deployment/lambda/<stem>.py is rejected if stem has no S3Key."""
+    from harness.agent.tools import dispatch_file_tool
+    (tmp_path / "faulted.yaml").write_text(
+        "Resources:\n"
+        "  MyFn:\n"
+        "    Type: AWS::Lambda::Function\n"
+        "    Properties:\n"
+        "      Code:\n"
+        "        S3Key: handler.zip\n"
+    )
+    lam = tmp_path / "deployment" / "lambda"
+    lam.mkdir(parents=True)
+
+    result = dispatch_file_tool(
+        "write_file",
+        {"path": "deployment/lambda/typo_handler.py", "content": "x = 1"},
+        str(tmp_path),
+    )
+    assert "no matching S3Key" in result
+    assert not (lam / "typo_handler.py").exists()
+
+
+def test_write_file_accepts_lambda_path_with_matching_s3key(tmp_path):
+    """write_file to deployment/lambda/<stem>.py succeeds when stem matches an S3Key."""
+    from harness.agent.tools import dispatch_file_tool
+    (tmp_path / "faulted.yaml").write_text(
+        "Resources:\n"
+        "  MyFn:\n"
+        "    Type: AWS::Lambda::Function\n"
+        "    Properties:\n"
+        "      Code:\n"
+        "        S3Key: handler.zip\n"
+    )
+    lam = tmp_path / "deployment" / "lambda"
+    lam.mkdir(parents=True)
+
+    result = dispatch_file_tool(
+        "write_file",
+        {"path": "deployment/lambda/handler.py", "content": "x = 1"},
+        str(tmp_path),
+    )
+    assert result.startswith("Written ")
+    assert (lam / "handler.py").read_text() == "x = 1"
+
+
+def test_write_file_no_orphan_check_outside_lambda_subdir(tmp_path):
+    """Writes to faulted.yaml or deployment/other/ are not subject to the S3Key check."""
+    from harness.agent.tools import dispatch_file_tool
+    (tmp_path / "faulted.yaml").write_text("# minimal\n")
+    (tmp_path / "deployment").mkdir()
+
+    result = dispatch_file_tool(
+        "write_file",
+        {"path": "faulted.yaml", "content": "# replaced\n"},
+        str(tmp_path),
+    )
+    assert result.startswith("Written ")

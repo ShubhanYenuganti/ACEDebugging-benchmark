@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 
 SIGNAL_FILE = os.environ.get("ACE_BENCH_SIGNAL_FILE", "/tmp/ace-bench-update.json")
 
@@ -104,6 +105,40 @@ FILE_TOOL_DEFINITIONS: list[dict] = [
 ]
 
 
+def _check_lambda_orphan(rel_path: str, scenario_root: pathlib.Path) -> str | None:
+    """Return an error message if rel_path is a deployment/lambda/*.py with no
+    matching S3Key in faulted.yaml; return None if the write is permitted.
+
+    The deployer matches Lambda files to template S3Keys by filename stem. A
+    file whose stem has no S3Key in the template will be silently skipped at
+    deploy time. Catching it here — before the write lands on disk — gives the
+    agent an immediate, actionable error instead of a confusing 'no_changes'
+    response two turns later.
+    """
+    norm = rel_path.replace("\\", "/")
+    if not (norm.startswith("deployment/lambda/") and norm.endswith(".py")):
+        return None
+    template_path = scenario_root / "faulted.yaml"
+    if not template_path.exists():
+        return None
+    template_body = template_path.read_text(encoding="utf-8")
+    stem = pathlib.Path(norm).stem
+    available_stems = {
+        os.path.basename(m)
+        for m in re.findall(r"S3Key:\s*(\S+)\.zip\b", template_body)
+    }
+    if stem in available_stems:
+        return None
+    return (
+        f"Error: deployment/lambda/{stem}.py has no matching S3Key in "
+        f"faulted.yaml. The deployer matches Lambda files to template S3Keys "
+        f"by filename stem; available stems: {sorted(available_stems)}. "
+        f"Either rename your edit to match one of these (e.g. "
+        f"deployment/lambda/<stem>.py), or first edit faulted.yaml to add "
+        f"an S3Key matching your filename."
+    )
+
+
 def dispatch_file_tool(name: str, inputs: dict, scenario_dir: str) -> str:
     scenario_root = pathlib.Path(scenario_dir).resolve()
 
@@ -135,6 +170,15 @@ def dispatch_file_tool(name: str, inputs: dict, scenario_dir: str) -> str:
         target = _safe_resolve(rel)
         if target is None:
             return "Error: path traversal not allowed."
+        orphan_err = _check_lambda_orphan(rel, scenario_root)
+        if orphan_err is not None:
+            return orphan_err
+        if target.exists() and target.read_text(encoding="utf-8") == content:
+            return (
+                f"Error: {rel} is unchanged — the content you wrote is identical to the "
+                "current file. Your fix had no effect. Re-read the file, identify what "
+                "specifically needs to change, and write a corrected version."
+            )
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return f"Written {rel} ({len(content)} chars)."
