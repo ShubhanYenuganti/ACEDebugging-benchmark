@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError, WaiterError
 
 from harness.runner.context_builder import build_context, corpus_dir_for_scenario
 from harness.runner.scenario_runner import ScenarioRunner, _parse_assertion_output
+from harness.shared.types import DeploymentResult
 
 _FIXED_INSTRUCTION = (
     "A deployed instance of this system is running in your local environment. "
@@ -126,8 +127,8 @@ class TestDeploymentHandler:
         )
         mocker.patch("harness.runner.deployment_handler.log_file_change")
         result = handle_submission(scenario_dir, "run-001", {})
-        assert result["outcome"] == "lint_fail"
-        assert len(result["errors"]) == 1
+        assert result.outcome == "lint_fail"
+        assert len(result.lint_errors) == 1
 
     def test_packaging_preflight_zips_and_uploads_lambda(self, tmp_path, mocker):
         scenario_dir = self._make_scenario(tmp_path)
@@ -200,8 +201,8 @@ class TestDeploymentHandler:
         mocker.patch("harness.runner.deployment_handler.cf_client", mock_cf)
         mocker.patch("harness.runner.deployment_handler.s3_client", MagicMock())
         result = handle_submission(scenario_dir, "run-003", {})
-        assert result["outcome"] == "deploy_fail"
-        assert len(result["events"]) > 0
+        assert result.outcome == "deploy_fail"
+        assert len(result.cfn_events) > 0
 
 
 
@@ -224,9 +225,9 @@ def test_handle_submission_returns_no_changes_on_no_updates_error(tmp_path):
          patch("harness.runner.deployment_handler.run_lint", return_value={"passed": True, "fatal_errors": [], "warnings": []}):
         mock_cf.update_stack.side_effect = err
         result = handle_submission(str(tmp_path), "run-test", {})
-    assert result["outcome"] == "no_changes"
-    assert "error" in result
-    assert "No updates" in result["error"] or "no changes" in result["error"].lower()
+    assert result.outcome == "no_changes"
+    assert result.error
+    assert "No updates" in result.error or "no changes" in result.error.lower()
 
 
 import threading
@@ -251,13 +252,14 @@ class TestScenarioRunner:
         mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
         mock_handle = mocker.patch(
             "harness.runner.scenario_runner.handle_submission",
-            return_value={"outcome": "deploy_success"},
+            return_value=DeploymentResult(outcome="deploy_success"),
         )
         runner = ScenarioRunner(scenario_dir, "run-test-1")
         result1 = runner.on_model_redeploy()
         result2 = runner.on_model_redeploy()
-        assert result1["outcome"] == "deploy_success"
-        assert result2["outcome"] == "already_submitted"
+        assert result1.outcome == "deploy_success"
+        assert result2.outcome == "unknown"
+        assert result2.error == "already_submitted"
         assert mock_handle.call_count == 1
 
     def test_intercept_tool_call_increments_count_and_logs(self, tmp_path, mocker):
@@ -280,10 +282,10 @@ def test_attempt_deployment_returns_success_dict(tmp_path, mocker):
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
-        return_value={"outcome": "deploy_success"},
+        return_value=DeploymentResult(outcome="deploy_success"),
     )
     result = runner.attempt_deployment()
-    assert result["success"] is True
+    assert result.success is True
     assert runner.submitted is True
 
 
@@ -293,12 +295,12 @@ def test_attempt_deployment_returns_failure_dict_on_no_changes(tmp_path, mocker)
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
-        return_value={"outcome": "no_changes", "error": "no changes detected"},
+        return_value=DeploymentResult(outcome="no_changes", error="no changes detected"),
     )
     result = runner.attempt_deployment()
-    assert result["success"] is False
+    assert result.success is False
     assert runner.submitted is False
-    assert "no changes" in result["error"]
+    assert "no changes" in result.error
 
 
 def test_attempt_deployment_blocked_after_success(tmp_path, mocker):
@@ -307,12 +309,12 @@ def test_attempt_deployment_blocked_after_success(tmp_path, mocker):
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
-        return_value={"outcome": "deploy_success"},
+        return_value=DeploymentResult(outcome="deploy_success"),
     )
     runner.attempt_deployment()
     result = runner.attempt_deployment()
-    assert result["success"] is False
-    assert "Already submitted" in result["error"]
+    assert result.success is False
+    assert "Already submitted" in result.error
 
 
 def test_corpus_dir_for_scenario_resolves_arch01(tmp_path):
@@ -436,9 +438,9 @@ def test_handle_submission_reports_skipped_lambda_files(tmp_path, mocker):
     cf.get_waiter.return_value.wait.return_value = None
 
     result = handle_submission(str(scenario), "run-skip", {})
-    assert result["outcome"] == "deploy_success"
-    assert "lambda/typo_handler.py" in result["skipped_lambda_files"]
-    assert "lambda/handler.py" not in result["skipped_lambda_files"]
+    assert result.outcome == "deploy_success"
+    assert "lambda/typo_handler.py" in result.skipped_lambda_files
+    assert "lambda/handler.py" not in result.skipped_lambda_files
 
 
 def test_run_functional_tests_nonzero_exit_is_failure(tmp_path, mocker):
@@ -497,10 +499,10 @@ def test_attempt_redeployment_runs_when_already_submitted(tmp_path, mocker):
     runner.submitted = True
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
-        return_value={"outcome": "deploy_success"},
+        return_value=DeploymentResult(outcome="deploy_success"),
     )
     result = runner.attempt_redeployment()
-    assert result["success"] is True
+    assert result.success is True
     assert runner.submitted is True  # unchanged
 
 def test_attempt_redeployment_never_sets_submitted_on_success(tmp_path, mocker):
@@ -510,10 +512,10 @@ def test_attempt_redeployment_never_sets_submitted_on_success(tmp_path, mocker):
     runner.submitted = False
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
-        return_value={"outcome": "deploy_success"},
+        return_value=DeploymentResult(outcome="deploy_success"),
     )
     result = runner.attempt_redeployment()
-    assert result["success"] is True
+    assert result.success is True
     assert runner.submitted is False  # not touched
 
 def test_attempt_redeployment_returns_failure_dict(tmp_path, mocker):
@@ -522,11 +524,11 @@ def test_attempt_redeployment_returns_failure_dict(tmp_path, mocker):
     runner = ScenarioRunner(str(tmp_path), "run-xyz")
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
-        return_value={"outcome": "no_changes", "error": "no changes detected"},
+        return_value=DeploymentResult(outcome="no_changes", error="no changes detected"),
     )
     result = runner.attempt_redeployment()
-    assert result["success"] is False
-    assert "no changes" in result["error"]
+    assert result.success is False
+    assert "no changes" in result.error
 
 
 def test_attempt_redeployment_updates_last_deployment_outcome(tmp_path, mocker):
@@ -536,7 +538,7 @@ def test_attempt_redeployment_updates_last_deployment_outcome(tmp_path, mocker):
     runner._last_deployment_outcome = "deploy_success"  # from earlier attempt
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
-        return_value={"outcome": "deploy_fail", "events": []},
+        return_value=DeploymentResult(outcome="deploy_fail"),
     )
     runner.attempt_redeployment()
     assert runner._last_deployment_outcome == "deploy_fail"
@@ -549,7 +551,7 @@ def test_attempt_redeployment_updates_outcome_on_success(tmp_path, mocker):
     runner._last_deployment_outcome = "deploy_fail"
     mocker.patch(
         "harness.runner.scenario_runner.handle_submission",
-        return_value={"outcome": "deploy_success"},
+        return_value=DeploymentResult(outcome="deploy_success"),
     )
     runner.attempt_redeployment()
     assert runner._last_deployment_outcome == "deploy_success"

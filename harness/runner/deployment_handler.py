@@ -10,6 +10,12 @@ from harness.shared.cfn_lint_runner import run_lint
 from harness.shared.file_differ import diff_snapshots, extract_line_changes, snapshot
 from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import log_file_change
+from harness.shared.types import (
+    CfnEvent,
+    DeploymentResult,
+    LambdaUpload,
+    PackagingPlan,
+)
 
 # Single source of truth — imported by context_builder.py and scenario_runner.py
 _STACK_NAME = "ace-bench-stack"
@@ -68,7 +74,44 @@ def _zip_file(file_path: str, arcname: str) -> bytes:
     return buf.getvalue()
 
 
-def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, start_faulted_yaml: str = "") -> dict:
+def _build_packaging_plan(diff: dict, template_body: str, deployment_dir: str, run_id: str) -> PackagingPlan:
+    """Compute what to upload and what to skip from a deployment diff.
+
+    A modified .py file under deployment/lambda/ becomes a LambdaUpload if its
+    stem matches an S3Key in the template; otherwise it's recorded as an orphan
+    so the caller can surface that to the agent.
+    """
+    plan = PackagingPlan()
+    lambda_rel_prefix = "lambda" + os.sep
+    for rel_path in diff["files_modified"] + diff["files_added"]:
+        if not (rel_path.startswith(lambda_rel_prefix) and rel_path.endswith(".py")):
+            continue
+        abs_path = os.path.join(deployment_dir, "lambda", os.path.basename(rel_path))
+        stem = os.path.splitext(os.path.basename(abs_path))[0]
+        original_key = find_s3key_for_stem(template_body, stem)
+        if original_key is None:
+            plan.orphans.append(rel_path.replace(os.sep, "/"))
+            continue
+        handler = find_handler_for_s3key(template_body, original_key)
+        arcname = handler_to_arcname(handler)
+        # Hash the zip bytes (not the file bytes) so the S3Key reflects exactly
+        # what Lambda will execute (arcname matters).
+        zip_bytes = _zip_file(abs_path, arcname=arcname)
+        sha = hashlib.sha256(zip_bytes).hexdigest()[:12]
+        plan.uploads.append(LambdaUpload(
+            rel_path=rel_path.replace(os.sep, "/"),
+            stem=stem,
+            s3_key_original=original_key,
+            s3_key_new=f"lambdas/{run_id}/{sha}/{stem}.zip",
+            sha256=sha,
+            arcname=arcname,
+        ))
+    if diff.get("per_file_line_changes", {}).get("faulted.yaml"):
+        plan.template_changed = True
+    return plan
+
+
+def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, start_faulted_yaml: str = "") -> DeploymentResult:
     scenario_dir = os.path.abspath(scenario_dir)
     deployment_dir = os.path.join(scenario_dir, "deployment")
     template_path = os.path.join(scenario_dir, "faulted.yaml")
@@ -103,54 +146,29 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, star
     # Step 2 — cfn-lint gate
     lint_result = run_lint(template_path)
     if not lint_result["passed"]:
-        return {
-            "outcome": "lint_fail",
-            "errors": lint_result["fatal_errors"],
-            "skipped_lambda_files": [],
-        }
+        return DeploymentResult(
+            outcome="lint_fail",
+            lint_errors=lint_result["fatal_errors"],
+        )
 
     # Step 3 — read template body
     with open(template_path, "r", encoding="utf-8") as f:
         template_body = f.read()
 
-    # Step 3b — packaging pre-flight: zip and upload changed Lambda files.
-    # For each changed .py file under deployment/lambda/:
-    #   1. Locate the matching CFN S3Key by stem (e.g. foo.py -> S3Key: foo.zip).
-    #   2. Derive the in-zip filename from that Lambda's Handler so the runtime
-    #      can find the module (avoids the index.py vs <name>.py mismatch).
-    #   3. Upload to a content-hashed S3Key so retries with new content produce
-    #      a new S3Key (and therefore a real CloudFormation diff); retries with
-    #      identical bytes correctly produce the same key.
-    lambda_rel_prefix = "lambda" + os.sep
-    skipped_lambda_files: list[str] = []
-    for rel_path in diff["files_modified"] + diff["files_added"]:
-        if not (rel_path.startswith(lambda_rel_prefix) and rel_path.endswith(".py")):
-            continue
-        abs_path = os.path.join(deployment_dir, "lambda", os.path.basename(rel_path))
-        fn_stem = os.path.splitext(os.path.basename(abs_path))[0]
+    # Step 3b — build packaging plan from diff + template
+    plan = _build_packaging_plan(diff, template_body, deployment_dir, run_id)
 
-        original_s3_key = find_s3key_for_stem(template_body, fn_stem)
-        if original_s3_key is None:
-            # No Lambda in the template uses this file — record it so the
-            # agent can correct the filename (or template S3Key) on retry.
-            # Previously this was a silent skip and the agent had no signal
-            # that its edit never reached the live Lambda.
-            skipped_lambda_files.append(rel_path.replace(os.sep, "/"))
-            continue
-        handler = find_handler_for_s3key(template_body, original_s3_key)
-        arcname = handler_to_arcname(handler)
-
-        zip_bytes = _zip_file(abs_path, arcname=arcname)
-        content_hash = hashlib.sha256(zip_bytes).hexdigest()[:12]
-        new_s3_key = f"lambdas/{run_id}/{content_hash}/{fn_stem}.zip"
-
+    # Step 3c — execute the plan: upload zips, mutate template body
+    for upload in plan.uploads:
         _ensure_artifact_bucket()
-        s3_client.put_object(Bucket=_ARTIFACT_BUCKET, Key=new_s3_key, Body=zip_bytes)
-
-        # Replace the specific S3Key value, not a regex over the whole template.
+        zip_bytes = _zip_file(
+            os.path.join(deployment_dir, "lambda", os.path.basename(upload.rel_path)),
+            arcname=upload.arcname,
+        )
+        s3_client.put_object(Bucket=_ARTIFACT_BUCKET, Key=upload.s3_key_new, Body=zip_bytes)
         template_body = re.sub(
-            r"(S3Key:\s*)" + re.escape(original_s3_key) + r"(?=\s|$)",
-            r"\g<1>" + new_s3_key,
+            r"(S3Key:\s*)" + re.escape(upload.s3_key_original) + r"(?=\s|$)",
+            r"\g<1>" + upload.s3_key_new,
             template_body,
         )
 
@@ -162,48 +180,51 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, star
             Capabilities=["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"],
         )
     except ClientError as e:
-        msg = str(e)
-        if "No updates are to be performed" in msg:
+        if "No updates are to be performed" in str(e):
             extra = ""
-            if skipped_lambda_files:
+            if plan.has_orphans:
                 extra = (
                     " Note: the following modified Lambda file(s) had no "
                     f"matching S3Key in the template and were not deployed: "
-                    f"{skipped_lambda_files}. Rename the file to match an "
-                    "S3Key stem in faulted.yaml, or edit the template's "
-                    "S3Key to match your filename."
+                    f"{plan.orphans}. Rename the file to match an S3Key stem "
+                    "in faulted.yaml, or edit the template's S3Key to match "
+                    "your filename."
                 )
-            return {
-                "outcome": "no_changes",
-                "error": (
+            return DeploymentResult(
+                outcome="no_changes",
+                error=(
                     "CloudFormation rejected the update: no changes detected. "
-                    "Your edits did not produce any diff in the deployed template or Lambda code. "
-                    "Verify your write_file call changed the correct file and property." + extra
+                    "Your edits did not produce any diff in the deployed template "
+                    "or Lambda code. Verify your write_file call changed the "
+                    "correct file and property." + extra
                 ),
-                "skipped_lambda_files": skipped_lambda_files,
-            }
+                skipped_lambda_files=plan.orphans,
+                packaged_files=[u.rel_path for u in plan.uploads],
+            )
         raise
 
     try:
         waiter = cf_client.get_waiter("stack_update_complete")
         waiter.wait(StackName=_STACK_NAME, WaiterConfig={"Delay": 5, "MaxAttempts": 60})
-        return {
-            "outcome": "deploy_success",
-            "skipped_lambda_files": skipped_lambda_files,
-        }
+        return DeploymentResult(
+            outcome="deploy_success",
+            skipped_lambda_files=plan.orphans,
+            packaged_files=[u.rel_path for u in plan.uploads],
+        )
     except WaiterError:
         events_res = cf_client.describe_stack_events(StackName=_STACK_NAME)
         events = [
-            {
-                "logical_id": e.get("LogicalResourceId"),
-                "status": e.get("ResourceStatus"),
-                "reason": e.get("ResourceStatusReason"),
-            }
+            CfnEvent(
+                logical_id=e.get("LogicalResourceId"),
+                status=e.get("ResourceStatus"),
+                reason=e.get("ResourceStatusReason"),
+            )
             for e in events_res.get("StackEvents", [])
             if e.get("ResourceStatusReason")
         ]
-        return {
-            "outcome": "deploy_fail",
-            "events": events,
-            "skipped_lambda_files": skipped_lambda_files,
-        }
+        return DeploymentResult(
+            outcome="deploy_fail",
+            cfn_events=events,
+            skipped_lambda_files=plan.orphans,
+            packaged_files=[u.rel_path for u in plan.uploads],
+        )

@@ -3,6 +3,8 @@ import json
 import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from harness.shared.types import DeploymentResult
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -414,7 +416,7 @@ def test_deploy_callback_success(tmp_path):
     from harness.agent.loop import run_agent_loop
     from unittest.mock import MagicMock
 
-    deploy_callback = MagicMock(return_value={"success": True, "error": None})
+    deploy_callback = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
 
     responses = [
         _make_litellm_response("tool_calls", tool_calls=[
@@ -457,8 +459,8 @@ def test_deploy_callback_failure_then_success(tmp_path):
     from unittest.mock import MagicMock
 
     deploy_results = [
-        {"success": False, "error": "no changes detected"},
-        {"success": True, "error": None},
+        DeploymentResult(outcome="no_changes", error="no changes detected"),
+        DeploymentResult(outcome="deploy_success"),
     ]
     deploy_callback = MagicMock(side_effect=deploy_results)
 
@@ -513,7 +515,7 @@ def test_deploy_callback_max_retries_exits(tmp_path):
     from harness.agent.loop import run_agent_loop
     from unittest.mock import MagicMock
 
-    deploy_callback = MagicMock(return_value={"success": False, "error": "persistent error"})
+    deploy_callback = MagicMock(return_value=DeploymentResult(outcome="deploy_fail", error="persistent error"))
 
     # Need: write_file + submit_fix repeated (1 initial + 5 retries = 6 calls)
     # Each retry needs a write_file + submit_fix pair (to pass writes_since_last_submit guard)
@@ -558,7 +560,7 @@ def test_deploy_callback_refuses_submit_without_new_write(tmp_path):
     from harness.agent.loop import run_agent_loop
     from unittest.mock import MagicMock
 
-    deploy_callback = MagicMock(return_value={"success": False, "error": "no changes"})
+    deploy_callback = MagicMock(return_value=DeploymentResult(outcome="no_changes", error="no changes"))
 
     responses = [
         # turn 1: write_file
@@ -847,7 +849,7 @@ def test_loop_calls_verify_after_successful_deploy(tmp_path):
     from harness.agent.loop import run_agent_loop
     from unittest.mock import MagicMock
 
-    deploy_cb = MagicMock(return_value={"success": True, "error": None})
+    deploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
     verify_cb = MagicMock(return_value={"all_passed": True, "passed": [], "failed": []})
 
     responses = [
@@ -883,8 +885,8 @@ def test_loop_continues_on_test_failure_then_exits_on_pass(tmp_path):
     from harness.agent.loop import run_agent_loop
     from unittest.mock import MagicMock
 
-    deploy_cb = MagicMock(return_value={"success": True, "error": None})
-    redeploy_cb = MagicMock(return_value={"success": True, "error": None})
+    deploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
+    redeploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
     verify_results = [
         {"all_passed": False, "passed": [], "failed": [{"name": "test_x", "description": "", "short_error": "AssertionError"}]},
         {"all_passed": True, "passed": [{"name": "test_x", "description": ""}], "failed": []},
@@ -932,8 +934,8 @@ def test_loop_exits_after_max_test_retries(tmp_path):
     from harness.agent.loop import run_agent_loop
     from unittest.mock import MagicMock
 
-    deploy_cb = MagicMock(return_value={"success": True, "error": None})
-    redeploy_cb = MagicMock(return_value={"success": True, "error": None})
+    deploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
+    redeploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
     verify_cb = MagicMock(return_value={
         "all_passed": False, "passed": [],
         "failed": [{"name": "test_x", "description": "", "short_error": "AssertionError"}],
@@ -972,8 +974,8 @@ def test_loop_routes_retry_submit_to_redeploy_callback(tmp_path):
     from harness.agent.loop import run_agent_loop
     from unittest.mock import MagicMock
 
-    deploy_cb = MagicMock(return_value={"success": True, "error": None})
-    redeploy_cb = MagicMock(return_value={"success": True, "error": None})
+    deploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
+    redeploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
     verify_results = [
         {"all_passed": False, "passed": [], "failed": [{"name": "t", "description": "", "short_error": "err"}]},
         {"all_passed": True, "passed": [], "failed": []},

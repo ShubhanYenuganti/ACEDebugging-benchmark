@@ -20,6 +20,7 @@ from harness.runner.context_builder import corpus_dir_for_scenario
 from harness.shared.file_differ import snapshot
 from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import init_run, log_tool_call
+from harness.shared.types import DeploymentResult
 
 
 def _parse_assertion_output(output: str) -> dict:
@@ -210,44 +211,45 @@ class ScenarioRunner:
             parsed["failed"] = list(parsed.get("failed", [])) + [crash]
         return parsed
 
-    def on_model_redeploy(self) -> dict:
+    def on_model_redeploy(self) -> DeploymentResult:
         with self._lock:
             if self.submitted:
-                return {"outcome": "already_submitted"}
+                # Signal "already submitted" by returning an unknown-outcome result.
+                # Callers don't use on_model_redeploy after submit; this is defensive.
+                return DeploymentResult(outcome="unknown", error="already_submitted")
             self.submitted = True
         try:
-            result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot, self.start_faulted_yaml)
+            result = handle_submission(
+                self.scenario_dir, self.run_id,
+                self.start_snapshot, self.start_faulted_yaml,
+            )
         except Exception:
             self._last_deployment_outcome = "error"
             raise
-        self._last_deployment_outcome = result.get("outcome", "unknown")
+        self._last_deployment_outcome = result.outcome
         return result
 
-    def attempt_deployment(self) -> dict:
+    def attempt_deployment(self) -> DeploymentResult:
         with self._lock:
             if self.submitted:
-                return {"success": False, "error": "Already submitted (final)."}
-        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot, self.start_faulted_yaml)
-        outcome = result.get("outcome", "unknown")
-        success = outcome == "deploy_success"
-        if success:
+                return DeploymentResult(
+                    outcome="unknown",
+                    error="Already submitted (final).",
+                )
+        result = handle_submission(
+            self.scenario_dir, self.run_id,
+            self.start_snapshot, self.start_faulted_yaml,
+        )
+        if result.success:
             with self._lock:
                 self.submitted = True
-            self._last_deployment_outcome = outcome
-        return {
-            "success": success,
-            "error": result.get("error", outcome),
-            "result": result,
-        }
+        self._last_deployment_outcome = result.outcome
+        return result
 
-    def attempt_redeployment(self) -> dict:
-        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot, self.start_faulted_yaml)
-        outcome = result.get("outcome", "unknown")
-        # Mirror attempt_deployment: keep _last_deployment_outcome reflecting
-        # the LATEST deploy state so run.py's verify gate uses fresh data.
-        self._last_deployment_outcome = outcome
-        return {
-            "success": outcome == "deploy_success",
-            "error": result.get("error", outcome),
-            "result": result,
-        }
+    def attempt_redeployment(self) -> DeploymentResult:
+        result = handle_submission(
+            self.scenario_dir, self.run_id,
+            self.start_snapshot, self.start_faulted_yaml,
+        )
+        self._last_deployment_outcome = result.outcome
+        return result

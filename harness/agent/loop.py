@@ -322,17 +322,13 @@ async def run_agent_loop(
                                     else deploy_callback
                                 )
                                 deploy_result = await asyncio.get_running_loop().run_in_executor(None, active_deploy_cb)
-                                if deploy_result["success"]:
+                                if deploy_result.success:
                                     submitted = True
                                     # Surface Lambda files that landed on disk but
                                     # had no matching S3Key in the template — they
                                     # were NOT deployed. Without this warning the
                                     # agent has no signal that its edit is orphaned.
-                                    _skipped = (
-                                        deploy_result.get("result", {}).get(
-                                            "skipped_lambda_files", []
-                                        )
-                                    )
+                                    _skipped = deploy_result.skipped_lambda_files
                                     _skipped_msg = ""
                                     if _skipped:
                                         _skipped_msg = (
@@ -378,14 +374,14 @@ async def run_agent_loop(
                                     submitted = True
                                     content = (
                                         f"Maximum retries ({max_deploy_retries}) reached. "
-                                        f"Last error: {deploy_result.get('error', 'unknown')}. Exiting."
+                                        f"Last error: {deploy_result.error or 'unknown'}. Exiting."
                                     )
                                 else:
                                     retry_count += 1
                                     writes_since_last_submit = 0
                                     content = (
                                         f"Deployment failed (attempt {retry_count}/{max_deploy_retries}): "
-                                        f"{deploy_result.get('error', 'unknown')}. "
+                                        f"{deploy_result.error or deploy_result.outcome}. "
                                         "Read the error carefully, revise your fix with write_file, "
                                         "then call submit_fix again."
                                     )
