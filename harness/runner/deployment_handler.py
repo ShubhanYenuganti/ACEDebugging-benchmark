@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError, WaiterError
 from harness.shared.cfn_lint_runner import run_lint
 from harness.shared.file_differ import diff_snapshots, extract_line_changes, snapshot
 from harness.shared.localstack_client import cf_client, s3_client
-from harness.shared.result_logger import log_file_change
+from harness.shared.result_logger import log_deployment, log_file_change
 from harness.shared.types import (
     CfnEvent,
     DeploymentResult,
@@ -143,13 +143,17 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, star
 
     log_file_change(run_id, diff)
 
+    plan = PackagingPlan()
+
     # Step 2 — cfn-lint gate
     lint_result = run_lint(template_path)
     if not lint_result["passed"]:
-        return DeploymentResult(
+        result = DeploymentResult(
             outcome="lint_fail",
             lint_errors=lint_result["fatal_errors"],
         )
+        log_deployment(run_id, plan, result)
+        return result
 
     # Step 3 — read template body
     with open(template_path, "r", encoding="utf-8") as f:
@@ -190,7 +194,7 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, star
                     "in faulted.yaml, or edit the template's S3Key to match "
                     "your filename."
                 )
-            return DeploymentResult(
+            result = DeploymentResult(
                 outcome="no_changes",
                 error=(
                     "CloudFormation rejected the update: no changes detected. "
@@ -201,16 +205,20 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, star
                 skipped_lambda_files=plan.orphans,
                 packaged_files=[u.rel_path for u in plan.uploads],
             )
+            log_deployment(run_id, plan, result)
+            return result
         raise
 
     try:
         waiter = cf_client.get_waiter("stack_update_complete")
         waiter.wait(StackName=_STACK_NAME, WaiterConfig={"Delay": 5, "MaxAttempts": 60})
-        return DeploymentResult(
+        result = DeploymentResult(
             outcome="deploy_success",
             skipped_lambda_files=plan.orphans,
             packaged_files=[u.rel_path for u in plan.uploads],
         )
+        log_deployment(run_id, plan, result)
+        return result
     except WaiterError:
         events_res = cf_client.describe_stack_events(StackName=_STACK_NAME)
         events = [
@@ -222,9 +230,11 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, star
             for e in events_res.get("StackEvents", [])
             if e.get("ResourceStatusReason")
         ]
-        return DeploymentResult(
+        result = DeploymentResult(
             outcome="deploy_fail",
             cfn_events=events,
             skipped_lambda_files=plan.orphans,
             packaged_files=[u.rel_path for u in plan.uploads],
         )
+        log_deployment(run_id, plan, result)
+        return result

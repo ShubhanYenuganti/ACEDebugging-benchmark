@@ -251,3 +251,24 @@ class TestResultLogger:
         log_verify_result("run-005", result)
         written = json.loads((tmp_path / "run-005" / "verify_result.json").read_text())
         assert written == result
+
+
+def test_log_deployment_appends_entries(tmp_path, monkeypatch):
+    import json
+    from harness.shared.result_logger import log_deployment
+    from harness.shared.types import DeploymentResult, LambdaUpload, PackagingPlan
+    monkeypatch.chdir(tmp_path)
+
+    plan1 = PackagingPlan(uploads=[LambdaUpload(
+        rel_path="lambda/h.py", stem="h", s3_key_original="h.zip",
+        s3_key_new="lambdas/r/abc/h.zip", sha256="abc", arcname="index.py",
+    )])
+    log_deployment("run-x", plan1, DeploymentResult(outcome="deploy_success"))
+    log_deployment("run-x", PackagingPlan(orphans=["lambda/typo.py"]),
+                   DeploymentResult(outcome="no_changes", error="no changes"))
+
+    data = json.loads((tmp_path / "results" / "run-x" / "deployment_log.json").read_text())
+    assert len(data) == 2
+    assert data[0]["outcome"] == "deploy_success"
+    assert data[0]["uploads"][0]["sha256"] == "abc"
+    assert data[1]["orphans"] == ["lambda/typo.py"]

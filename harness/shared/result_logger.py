@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -44,3 +45,42 @@ def log_file_change(run_id: str, diff: dict) -> None:
 def log_verify_result(run_id: str, result: dict) -> None:
     path = Path(RESULTS_DIR) / run_id / "verify_result.json"
     path.write_text(json.dumps(result, indent=2))
+
+
+def log_deployment(run_id: str, plan, result) -> None:
+    """Append one entry to results/<run_id>/deployment_log.json."""
+    from harness.shared.types import DeploymentResult, PackagingPlan  # avoid circular at module load
+    path = os.path.join("results", run_id, "deployment_log.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    entries: list = []
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            try:
+                entries = json.load(f)
+            except json.JSONDecodeError:
+                entries = []
+    entry = {
+        "outcome": result.outcome,
+        "error": result.error,
+        "uploads": [
+            {
+                "rel_path": u.rel_path,
+                "stem": u.stem,
+                "s3_key_original": u.s3_key_original,
+                "s3_key_new": u.s3_key_new,
+                "sha256": u.sha256,
+                "arcname": u.arcname,
+            }
+            for u in plan.uploads
+        ],
+        "orphans": plan.orphans,
+        "template_changed": plan.template_changed,
+        "packaged_files": result.packaged_files,
+        "cfn_events": [
+            {"logical_id": e.logical_id, "status": e.status, "reason": e.reason}
+            for e in result.cfn_events
+        ],
+    }
+    entries.append(entry)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(entries, f, indent=2)
