@@ -1,7 +1,9 @@
 import asyncio
 import datetime
+import difflib
 import json
 import os
+import pathlib
 import re
 import uuid
 from contextlib import asynccontextmanager
@@ -153,12 +155,10 @@ def _format_test_summary(result: dict, attempt: int, max_retries: int) -> str:
     n_failed = len(result.get("failed", []))
     lines = [f"Tests: {n_passed} passed, {n_failed} failed."]
     for t in result.get("passed", []):
-        desc = f": {t['description']}" if t.get("description") else ""
-        lines.append(f"passed ({t['name']}{desc})")
+        lines.append(f"[{t['name']}]: PASS")
     for t in result.get("failed", []):
-        desc = f": {t['description']}" if t.get("description") else ""
         err = f" — {t['short_error']}" if t.get("short_error") else ""
-        lines.append(f"failed ({t['name']}{desc}{err})")
+        lines.append(f"[{t['name']}]: FAIL{err}")
     lines.append(
         f"Revise your fix with write_file and call submit_fix again. "
         f"(Attempt {attempt} of {max_retries}.)"
@@ -324,16 +324,42 @@ async def run_agent_loop(
                                 deploy_result = await asyncio.get_running_loop().run_in_executor(None, active_deploy_cb)
                                 if deploy_result["success"]:
                                     submitted = True
+                                    # Surface Lambda files that landed on disk but
+                                    # had no matching S3Key in the template — they
+                                    # were NOT deployed. Without this warning the
+                                    # agent has no signal that its edit is orphaned.
+                                    _skipped = (
+                                        deploy_result.get("result", {}).get(
+                                            "skipped_lambda_files", []
+                                        )
+                                    )
+                                    _skipped_msg = ""
+                                    if _skipped:
+                                        _skipped_msg = (
+                                            "WARNING: the following Lambda file(s) you edited "
+                                            "had no matching S3Key in the template and were "
+                                            f"NOT deployed: {_skipped}. Their content is on "
+                                            "disk but the live Lambda still runs the old code. "
+                                            "Either rename your edit to match a template S3Key "
+                                            "stem, or edit the template's S3Key to match your "
+                                            "filename, then submit_fix again.\n\n"
+                                        )
                                     if verify_callback is not None:
                                         verify_result = await asyncio.get_running_loop().run_in_executor(
                                             None, verify_callback
                                         )
                                         if verify_result["all_passed"]:
                                             all_tests_passed = True
-                                            content = "Fix deployed and all tests passed."
+                                            result_lines = ["Fix deployed and all tests passed."]
+                                            for t in verify_result.get("passed", []):
+                                                result_lines.append(f"[{t['name']}]: PASS")
+                                            for t in verify_result.get("failed", []):
+                                                err = f" — {t['short_error']}" if t.get("short_error") else ""
+                                                result_lines.append(f"[{t['name']}]: FAIL{err}")
+                                            content = _skipped_msg + "\n".join(result_lines)
                                         elif test_retry_count >= max_test_retries:
                                             all_tests_passed = False
-                                            content = (
+                                            content = _skipped_msg + (
                                                 f"Maximum test retries ({max_test_retries}) reached. "
                                                 + _format_test_summary(verify_result, test_retry_count, max_test_retries)
                                             )
@@ -341,12 +367,12 @@ async def run_agent_loop(
                                             submitted = False
                                             test_retry_count += 1
                                             writes_since_last_submit = 0
-                                            content = _format_test_summary(
+                                            content = _skipped_msg + _format_test_summary(
                                                 verify_result, test_retry_count, max_test_retries
                                             )
                                     else:
                                         all_tests_passed = True
-                                        content = "Fix deployed successfully."
+                                        content = _skipped_msg + "Fix deployed successfully."
                                 elif retry_count >= max_deploy_retries:
                                     # exit gracefully — model cannot fix within budget
                                     submitted = True
@@ -364,17 +390,38 @@ async def run_agent_loop(
                                         "then call submit_fix again."
                                     )
                         else:
+                            _old_content = ""
+                            if name == "write_file":
+                                _old_path = (pathlib.Path(scenario_dir) / args.get("path", "")).resolve()
+                                if _old_path.exists():
+                                    try:
+                                        _old_content = _old_path.read_text(encoding="utf-8")
+                                    except Exception:
+                                        _old_content = ""
                             content = dispatch_file_tool(name, args, scenario_dir)
                             if name == "write_file" and content.startswith("Written "):
                                 writes_made += 1
                                 writes_since_last_submit += 1
                                 if verbose:
-                                    written_content = args.get("content", "")
+                                    new_content = args.get("content", "")
                                     file_path = args.get("path", "?")
-                                    lines = written_content.splitlines()
-                                    preview = "\n".join(f"    {line}" for line in lines[:30])
-                                    suffix = f"\n    ... ({len(lines) - 30} more lines)" if len(lines) > 30 else ""
-                                    print(f"  [edit → {file_path}]\n{preview}{suffix}", flush=True)
+                                    before_lines = _old_content.splitlines() if _old_content else []
+                                    after_lines = new_content.splitlines()
+                                    diff_lines = list(difflib.unified_diff(
+                                        before_lines, after_lines,
+                                        fromfile=f"a/{file_path}", tofile=f"b/{file_path}",
+                                        lineterm="",
+                                    ))
+                                    changed = [
+                                        l for l in diff_lines
+                                        if (l.startswith("+") or l.startswith("-"))
+                                        and not l.startswith(("+++", "---"))
+                                    ]
+                                    print(f"  [edit → {file_path}]", flush=True)
+                                    for dl in changed[:30]:
+                                        print(f"    {dl}", flush=True)
+                                    if len(changed) > 30:
+                                        print(f"    ... ({len(changed) - 30} more changes)", flush=True)
                 else:
                     try:
                         mcp_result = await session.call_tool(name, args)

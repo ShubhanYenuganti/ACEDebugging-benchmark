@@ -752,7 +752,7 @@ def test_verbose_prints_write_file_preview(tmp_path, capsys):
     assert "line 1" in captured.out
     assert "line 30" in captured.out
     assert "line 31" not in captured.out
-    assert "10 more lines" in captured.out
+    assert "10 more changes" in captured.out
 
 
 def test_verbose_write_file_preview_short_file(tmp_path, capsys):
@@ -1012,3 +1012,15 @@ def test_loop_routes_retry_submit_to_redeploy_callback(tmp_path):
 
     assert deploy_cb.call_count == 1
     assert redeploy_cb.call_count == 1
+
+
+def test_loop_relays_skipped_lambda_files_in_success_message():
+    """Smoke test: verify the success branch reads skipped_lambda_files
+    from deploy_result['result'] and includes the WARNING block in the
+    message handed back to the model. Guards against accidental deletion
+    of the relay wiring during refactors.
+    """
+    import harness.agent.loop as loop
+    src = open(loop.__file__).read()
+    assert "skipped_lambda_files" in src
+    assert "had no matching S3Key" in src

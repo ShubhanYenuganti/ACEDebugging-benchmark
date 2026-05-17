@@ -390,6 +390,57 @@ def test_parse_assertion_output_empty_output_is_failure():
     assert result["failed"][0]["name"] == "__no_assertions__"
 
 
+def test_handle_submission_reports_skipped_lambda_files(tmp_path, mocker):
+    scenario = tmp_path / "scenario"
+    scenario.mkdir()
+    # Template references handler.zip only.
+    (scenario / "faulted.yaml").write_text(
+        "AWSTemplateFormatVersion: '2010-09-09'\n"
+        "Resources:\n"
+        "  MyFn:\n"
+        "    Type: AWS::Lambda::Function\n"
+        "    Properties:\n"
+        "      Handler: index.handler\n"
+        "      Code:\n"
+        "        S3Bucket: ace-bench-artifacts\n"
+        "        S3Key: handler.zip\n"
+    )
+    (scenario / "deployment").mkdir()
+    lam = scenario / "deployment" / "lambda"
+    lam.mkdir()
+    (lam / "handler.py").write_text("def handler(e,c): return 200\n")
+    # Agent also wrote a NEW file whose stem (typo_handler) does not match any S3Key.
+    (lam / "typo_handler.py").write_text("def handler(e,c): return 500\n")
+
+    mocker.patch(
+        "harness.runner.deployment_handler.run_lint",
+        return_value={"passed": True, "fatal_errors": [], "warnings": []},
+    )
+    mocker.patch("harness.runner.deployment_handler.snapshot", return_value={})
+    mocker.patch(
+        "harness.runner.deployment_handler.diff_snapshots",
+        return_value={
+            "files_added": [os.path.join("lambda", "typo_handler.py")],
+            "files_modified": [os.path.join("lambda", "handler.py")],
+            "files_removed": [],
+            "total_files_changed": 2,
+            "per_file_line_changes": {},
+            "total_lines_changed": 0,
+        },
+    )
+    mocker.patch("harness.runner.deployment_handler.log_file_change")
+    mocker.patch("harness.runner.deployment_handler._ensure_artifact_bucket")
+    mocker.patch("harness.runner.deployment_handler.s3_client.put_object")
+    cf = mocker.patch("harness.runner.deployment_handler.cf_client")
+    cf.update_stack.return_value = {}
+    cf.get_waiter.return_value.wait.return_value = None
+
+    result = handle_submission(str(scenario), "run-skip", {})
+    assert result["outcome"] == "deploy_success"
+    assert "lambda/typo_handler.py" in result["skipped_lambda_files"]
+    assert "lambda/handler.py" not in result["skipped_lambda_files"]
+
+
 def test_run_functional_tests_nonzero_exit_is_failure(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
