@@ -3,7 +3,7 @@ import json
 import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from harness.shared.types import DeploymentResult
+from harness.shared.types import AssertionResult, AssertionRunResult, DeploymentResult
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -850,7 +850,9 @@ def test_loop_calls_verify_after_successful_deploy(tmp_path):
     from unittest.mock import MagicMock
 
     deploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
-    verify_cb = MagicMock(return_value={"all_passed": True, "passed": [], "failed": []})
+    verify_cb = MagicMock(return_value=AssertionRunResult(assertions=[
+        AssertionResult(name="dummy", verdict="pass"),
+    ]))
 
     responses = [
         _make_litellm_response("tool_calls", tool_calls=[
@@ -888,8 +890,8 @@ def test_loop_continues_on_test_failure_then_exits_on_pass(tmp_path):
     deploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
     redeploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
     verify_results = [
-        {"all_passed": False, "passed": [], "failed": [{"name": "test_x", "description": "", "short_error": "AssertionError"}]},
-        {"all_passed": True, "passed": [{"name": "test_x", "description": ""}], "failed": []},
+        AssertionRunResult(assertions=[AssertionResult(name="test_x", verdict="fail", message="AssertionError")]),
+        AssertionRunResult(assertions=[AssertionResult(name="test_x", verdict="pass")]),
     ]
     verify_cb = MagicMock(side_effect=verify_results)
 
@@ -936,10 +938,9 @@ def test_loop_exits_after_max_test_retries(tmp_path):
 
     deploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
     redeploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
-    verify_cb = MagicMock(return_value={
-        "all_passed": False, "passed": [],
-        "failed": [{"name": "test_x", "description": "", "short_error": "AssertionError"}],
-    })
+    verify_cb = MagicMock(return_value=AssertionRunResult(assertions=[
+        AssertionResult(name="test_x", verdict="fail", message="AssertionError"),
+    ]))
 
     responses = []
     for i in range(6):  # 1 initial + 5 retries
@@ -977,8 +978,8 @@ def test_loop_routes_retry_submit_to_redeploy_callback(tmp_path):
     deploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
     redeploy_cb = MagicMock(return_value=DeploymentResult(outcome="deploy_success"))
     verify_results = [
-        {"all_passed": False, "passed": [], "failed": [{"name": "t", "description": "", "short_error": "err"}]},
-        {"all_passed": True, "passed": [], "failed": []},
+        AssertionRunResult(assertions=[AssertionResult(name="t", verdict="fail", message="err")]),
+        AssertionRunResult(assertions=[AssertionResult(name="dummy", verdict="pass")]),
     ]
     verify_cb = MagicMock(side_effect=verify_results)
 

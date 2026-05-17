@@ -3,6 +3,7 @@ import os
 
 import pytest
 
+from harness.shared.types import AssertionResult, AssertionRunResult
 from harness.verify.pass1_functional import run_pass1
 
 
@@ -22,26 +23,26 @@ class TestPass1Functional:
         )
         corpus_dir = self._make_corpus(tmp_path, output)
         result = run_pass1(corpus_dir)
-        assert result["assertions"]["connectivity"]["result"] == "pass"
-        assert result["assertions"]["auth_check"]["result"] == "fail"
-        assert result["assertions"]["data_write"]["result"] == "pass"
-        assert result["failed_assertion_names"] == ["auth_check"]
+        assert result.assertions_by_name["connectivity"].verdict == "pass"
+        assert result.assertions_by_name["auth_check"].verdict == "fail"
+        assert result.assertions_by_name["data_write"].verdict == "pass"
+        assert result.all_failed_names == ["auth_check"]
 
     def test_primary_assertions_passed_excludes_secondary(self, tmp_path):
         output = "ASSERT pass main_check: ok\nASSERT fail latency_secondary: too slow\n"
         corpus_dir = self._make_corpus(tmp_path, output)
         result = run_pass1(corpus_dir)
-        assert result["primary_assertions_passed"] is True
-        assert result["all_assertions_passed"] is False
-        assert "latency_secondary" in result["failed_assertion_names"]
+        assert result.primary_assertions_passed is True
+        assert result.all_assertions_passed is False
+        assert "latency_secondary" in result.all_failed_names
 
     def test_all_assertions_passed_true_when_all_pass(self, tmp_path):
         output = "ASSERT pass check_a: ok\nASSERT pass check_b: ok\n"
         corpus_dir = self._make_corpus(tmp_path, output)
         result = run_pass1(corpus_dir)
-        assert result["primary_assertions_passed"] is True
-        assert result["all_assertions_passed"] is True
-        assert result["failed_assertion_names"] == []
+        assert result.primary_assertions_passed is True
+        assert result.all_assertions_passed is True
+        assert result.all_failed_names == []
 
     def test_primary_assertions_passed_false_when_primary_fails(self, tmp_path):
         output = (
@@ -49,17 +50,17 @@ class TestPass1Functional:
         )
         corpus_dir = self._make_corpus(tmp_path, output)
         result = run_pass1(corpus_dir)
-        assert result["primary_assertions_passed"] is False
+        assert result.primary_assertions_passed is False
 
     def test_zero_assertions_is_treated_as_failure(self, tmp_path):
         # Test crashed / mis-configured: no ASSERT lines emitted at all.
         # Must be treated as failure so scorer doesn't credit a non-run.
         corpus_dir = self._make_corpus(tmp_path, "hello\nworld\n")
         result = run_pass1(corpus_dir)
-        assert result["primary_assertions_passed"] is False
-        assert result["all_assertions_passed"] is False
-        assert "__no_assertions__" in result["failed_assertion_names"]
-        assert result["assertions"]["__no_assertions__"]["result"] == "fail"
+        assert result.primary_assertions_passed is False
+        assert result.all_assertions_passed is False
+        assert "__no_assertions__" in result.all_failed_names
+        assert result.assertions_by_name["__no_assertions__"].verdict == "fail"
 
 
 from pathlib import Path
@@ -89,13 +90,11 @@ class TestPass2Regression:
             results_dir,
         )
         monkeypatch.setattr(p2mod, "RESULTS_DIR", results_dir)
-        pass1_result = {
-            "assertions": {
-                "check_a": {"result": "pass", "message": ""},
-                "check_b": {"result": "fail", "message": "broke"},
-                "check_c": {"result": "fail", "message": "still broken"},
-            }
-        }
+        pass1_result = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="pass", message=""),
+            AssertionResult(name="check_b", verdict="fail", message="broke"),
+            AssertionResult(name="check_c", verdict="fail", message="still broken"),
+        ])
         result = run_pass2("scenario", "run-r1", pass1_result)
         assert result["regression_count"] == 1
         assert result["regressions"][0]["assertion"] == "check_b"
@@ -109,9 +108,9 @@ class TestPass2Regression:
             tmp_path, "run-r2", {"check_secondary": "pass"}, results_dir
         )
         monkeypatch.setattr(p2mod, "RESULTS_DIR", results_dir)
-        pass1_result = {
-            "assertions": {"check_secondary": {"result": "fail", "message": ""}}
-        }
+        pass1_result = AssertionRunResult(assertions=[
+            AssertionResult(name="check_secondary", verdict="fail", message=""),
+        ])
         result = run_pass2("scenario", "run-r2", pass1_result)
         assert result["critical_regression_count"] == 0
         assert result["non_critical_regression_count"] == 1
@@ -122,12 +121,10 @@ class TestPass2Regression:
             tmp_path, "run-r3", {"check_a": "fail", "check_b": "pass"}, results_dir
         )
         monkeypatch.setattr(p2mod, "RESULTS_DIR", results_dir)
-        pass1_result = {
-            "assertions": {
-                "check_a": {"result": "pass", "message": "fixed"},
-                "check_b": {"result": "pass", "message": "still ok"},
-            }
-        }
+        pass1_result = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="pass", message="fixed"),
+            AssertionResult(name="check_b", verdict="pass", message="still ok"),
+        ])
         result = run_pass2("scenario", "run-r3", pass1_result)
         assert result["regression_count"] == 0
         assert result["regressions"] == []
@@ -176,10 +173,9 @@ class TestPass3Classification:
             "-      Timeout: 3\n+      Timeout: 30\n",
         )
         monkeypatch.setattr(p3mod, "RESULTS_DIR", results_dir)
-        pass1_result = {
-            "primary_assertions_passed": True,
-            "assertions": {"check_a": {"result": "pass", "message": "ok"}},
-        }
+        pass1_result = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="pass", message="ok"),
+        ])
         result = run_pass3(scenario_dir, "run-p3-1", pass1_result, manifest_path)
         assert result["classification"] == "root_cause"
         assert result["structural_match"] is True
@@ -207,10 +203,9 @@ class TestPass3Classification:
             "+  ENV_VAR: override\n",
         )
         monkeypatch.setattr(p3mod, "RESULTS_DIR", results_dir)
-        pass1_result = {
-            "primary_assertions_passed": True,
-            "assertions": {"check_a": {"result": "pass", "message": "ok"}},
-        }
+        pass1_result = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="pass", message="ok"),
+        ])
         result = run_pass3(scenario_dir, "run-p3-2", pass1_result, manifest_path)
         assert result["classification"] == "workaround"
         assert result["structural_match"] is False
@@ -230,10 +225,9 @@ class TestPass3Classification:
             tmp_path, "run-p3-3", manifest, faulted_yaml, submitted_yaml, diff_text
         )
         monkeypatch.setattr(p3mod, "RESULTS_DIR", results_dir)
-        pass1_result = {
-            "primary_assertions_passed": True,
-            "assertions": {"check_a": {"result": "pass", "message": "ok"}},
-        }
+        pass1_result = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="pass", message="ok"),
+        ])
         result = run_pass3(scenario_dir, "run-p3-3", pass1_result, manifest_path)
         assert result["invalid_patch_detected"] is True
         assert result["classification"] != "root_cause"
@@ -252,10 +246,9 @@ class TestPass3Classification:
             tmp_path, "run-p3-4", manifest, faulted_yaml, submitted_yaml, ""
         )
         monkeypatch.setattr(p3mod, "RESULTS_DIR", results_dir)
-        pass1_result = {
-            "primary_assertions_passed": False,
-            "assertions": {"check_a": {"result": "fail", "message": "still broken"}},
-        }
+        pass1_result = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="fail", message="still broken"),
+        ])
         result = run_pass3(scenario_dir, "run-p3-4", pass1_result, manifest_path)
         assert result["classification"] in ("partial", "none")
 
@@ -305,10 +298,9 @@ class TestPass3Classification:
             "+                  - dynamodb:PutItem\n",
         )
         monkeypatch.setattr(p3mod, "RESULTS_DIR", results_dir)
-        pass1_result = {
-            "primary_assertions_passed": True,
-            "assertions": {"check_a": {"result": "pass", "message": "ok"}},
-        }
+        pass1_result = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="pass", message="ok"),
+        ])
         result = run_pass3(scenario_dir, "run-p3-5", pass1_result, manifest_path)
         assert result["structural_match"] is True
         assert result["classification"] == "root_cause"
@@ -342,10 +334,9 @@ class TestPass3Classification:
             tmp_path, "run-p3-6", manifest, faulted_yaml, submitted_yaml, ""
         )
         monkeypatch.setattr(p3mod, "RESULTS_DIR", results_dir)
-        pass1_result = {
-            "primary_assertions_passed": False,
-            "assertions": {"check_a": {"result": "fail", "message": ""}},
-        }
+        pass1_result = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="fail", message=""),
+        ])
         result = run_pass3(scenario_dir, "run-p3-6", pass1_result, manifest_path)
         assert result["structural_match"] is False
 
@@ -457,12 +448,9 @@ class TestVerifyLoop:
         self._write_baseline(results_dir, "run-v2", {"check_a": "fail"})
         monkeypatch.setattr(vlmod, "RESULTS_DIR", results_dir)
         monkeypatch.setattr(vlmod, "log_verify_result", lambda *a, **kw: None)
-        pass1 = {
-            "assertions": {"check_a": {"result": "pass", "message": ""}},
-            "primary_assertions_passed": True,
-            "all_assertions_passed": True,
-            "failed_assertion_names": [],
-        }
+        pass1 = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="pass", message=""),
+        ])
         pass2 = {
             "regression_count": 0,
             "regressions": [],
@@ -495,12 +483,9 @@ class TestVerifyLoop:
         self._write_baseline(results_dir, "run-v3", {"check_a": "fail"})
         monkeypatch.setattr(vlmod, "RESULTS_DIR", results_dir)
         monkeypatch.setattr(vlmod, "log_verify_result", lambda *a, **kw: None)
-        pass1 = {
-            "assertions": {"check_a": {"result": "pass", "message": ""}},
-            "primary_assertions_passed": True,
-            "all_assertions_passed": True,
-            "failed_assertion_names": [],
-        }
+        pass1 = AssertionRunResult(assertions=[
+            AssertionResult(name="check_a", verdict="pass", message=""),
+        ])
         pass2 = {
             "regression_count": 0,
             "regressions": [],
