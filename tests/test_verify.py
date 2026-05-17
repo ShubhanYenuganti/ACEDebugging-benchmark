@@ -51,6 +51,16 @@ class TestPass1Functional:
         result = run_pass1(corpus_dir)
         assert result["primary_assertions_passed"] is False
 
+    def test_zero_assertions_is_treated_as_failure(self, tmp_path):
+        # Test crashed / mis-configured: no ASSERT lines emitted at all.
+        # Must be treated as failure so scorer doesn't credit a non-run.
+        corpus_dir = self._make_corpus(tmp_path, "hello\nworld\n")
+        result = run_pass1(corpus_dir)
+        assert result["primary_assertions_passed"] is False
+        assert result["all_assertions_passed"] is False
+        assert "__no_assertions__" in result["failed_assertion_names"]
+        assert result["assertions"]["__no_assertions__"]["result"] == "fail"
+
 
 from pathlib import Path
 

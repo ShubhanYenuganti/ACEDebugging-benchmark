@@ -9,7 +9,7 @@ import pytest
 from botocore.exceptions import ClientError, WaiterError
 
 from harness.runner.context_builder import build_context, corpus_dir_for_scenario
-from harness.runner.scenario_runner import ScenarioRunner, _parse_pytest_output
+from harness.runner.scenario_runner import ScenarioRunner, _parse_assertion_output
 
 _FIXED_INSTRUCTION = (
     "A deployed instance of this system is running in your local environment. "
@@ -89,7 +89,10 @@ class TestDeploymentHandler:
             "  MyFn:\n"
             "    Type: AWS::Lambda::Function\n"
             "    Properties:\n"
-            "      S3Key: old-handler.zip\n"
+            "      Handler: index.handler\n"
+            "      Code:\n"
+            "        S3Bucket: ace-bench-artifacts\n"
+            "        S3Key: handler.zip\n"
         )
         deployment = scenario / "deployment"
         deployment.mkdir()
@@ -114,7 +117,7 @@ class TestDeploymentHandler:
             "harness.runner.deployment_handler.diff_snapshots",
             return_value={
                 "files_added": [],
-                "files_modified": ["deployment/lambda/handler.py"],
+                "files_modified": ["lambda/handler.py"],
                 "files_removed": [],
                 "total_files_changed": 1,
                 "per_file_line_changes": {},
@@ -137,7 +140,7 @@ class TestDeploymentHandler:
             "harness.runner.deployment_handler.diff_snapshots",
             return_value={
                 "files_added": [],
-                "files_modified": [os.path.join("deployment", "lambda", "handler.py")],
+                "files_modified": [os.path.join("lambda", "handler.py")],
                 "files_removed": [],
                 "total_files_changed": 1,
                 "per_file_line_changes": {},
@@ -335,31 +338,82 @@ def test_corpus_dir_for_scenario_raises_on_bad_name(tmp_path):
         corpus_dir_for_scenario(bad, corpus_root=tmp_path / "corpus")
 
 
-def test_parse_pytest_output_all_passing():
+def test_parse_assertion_output_all_passing():
     output = (
-        "PASSED functional_test.py::test_friend_request\n"
-        "PASSED functional_test.py::test_read_list\n"
-        "2 passed in 1.23s\n"
+        "ASSERT pass test_friend_request: ok\n"
+        "ASSERT pass test_read_list: ok\n"
     )
-    result = _parse_pytest_output(output)
+    result = _parse_assertion_output(output)
     assert result["all_passed"] is True
     assert len(result["passed"]) == 2
     assert len(result["failed"]) == 0
     assert result["passed"][0]["name"] == "test_friend_request"
 
-def test_parse_pytest_output_with_failures():
+def test_parse_assertion_output_with_failures():
     output = (
-        "PASSED functional_test.py::test_friend_request\n"
-        "FAILED functional_test.py::test_accept_state\n"
-        "E   AssertionError: state 'Requested' != 'Friends'\n"
-        "1 passed, 1 failed in 2.00s\n"
+        "ASSERT pass test_friend_request: ok\n"
+        "ASSERT fail test_accept_state: state 'Requested' != 'Friends'\n"
     )
-    result = _parse_pytest_output(output)
+    result = _parse_assertion_output(output)
     assert result["all_passed"] is False
     assert len(result["passed"]) == 1
     assert len(result["failed"]) == 1
     assert result["failed"][0]["name"] == "test_accept_state"
     assert "Requested" in result["failed"][0]["short_error"]
+
+def test_parse_assertion_output_secondary_failure_not_fatal():
+    # _secondary failures are tracked but don't make `all_passed` False.
+    output = (
+        "ASSERT pass test_primary: ok\n"
+        "ASSERT fail test_optional_secondary: minor regression\n"
+    )
+    result = _parse_assertion_output(output)
+    assert result["all_passed"] is True
+    assert len(result["failed"]) == 1
+
+
+def test_parse_assertion_output_zero_assertions_is_failure():
+    # Functional test crashed before emitting any ASSERT line.
+    # This must NOT be treated as success — it means nothing ran.
+    output = "Traceback (most recent call last):\n  ImportError: boto3\n"
+    result = _parse_assertion_output(output)
+    assert result["all_passed"] is False
+    assert len(result["failed"]) == 1
+    assert result["failed"][0]["name"] == "__no_assertions__"
+    assert "no assert" in result["failed"][0]["short_error"].lower()
+
+
+def test_parse_assertion_output_empty_output_is_failure():
+    result = _parse_assertion_output("")
+    assert result["all_passed"] is False
+    assert len(result["failed"]) == 1
+    assert result["failed"][0]["name"] == "__no_assertions__"
+
+
+def test_run_functional_tests_nonzero_exit_is_failure(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-test")
+    corpus_dir = tmp_path / "corpus" / "arch_01_x"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / "functional_test.py").write_text("raise SystemExit(2)\n")
+    mocker.patch(
+        "harness.runner.scenario_runner.corpus_dir_for_scenario",
+        return_value=corpus_dir,
+    )
+    mocker.patch(
+        "harness.runner.scenario_runner.subprocess.run",
+        return_value=MagicMock(
+            returncode=2,
+            stdout="ASSERT pass test_a: ok\n",
+            stderr="some traceback",
+        ),
+    )
+    result = runner.run_functional_tests()
+    assert result["all_passed"] is False
+    # A test that crashed mid-run shouldn't be credited even if some asserts passed.
+    crash_names = [f["name"] for f in result["failed"]]
+    assert "__test_crashed__" in crash_names
 
 def test_run_functional_tests_calls_subprocess(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
@@ -376,7 +430,7 @@ def test_run_functional_tests_calls_subprocess(tmp_path, mocker):
         "harness.runner.scenario_runner.subprocess.run",
         return_value=MagicMock(
             returncode=0,
-            stdout="PASSED functional_test.py::test_x\n1 passed in 0.5s\n",
+            stdout="ASSERT pass test_x: ok\n",
             stderr="",
         ),
     )

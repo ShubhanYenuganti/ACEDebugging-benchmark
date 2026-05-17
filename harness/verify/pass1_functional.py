@@ -23,6 +23,21 @@ def run_pass1(corpus_dir: str) -> dict:
     failed = [n for n, v in assertions.items() if v["result"] == "fail"]
     primary_failed = [n for n in failed if "_secondary" not in n]
 
+    if not assertions:
+        # Functional test crashed before emitting any ASSERT line.
+        synthetic_name = "__no_assertions__"
+        assertions = {
+            synthetic_name: {
+                "result": "fail",
+                "message": (
+                    "functional_test.py produced no ASSERT pass|fail lines "
+                    "(likely crashed or mis-configured)."
+                ),
+            }
+        }
+        failed = [synthetic_name]
+        primary_failed = [synthetic_name]
+
     return {
         "assertions": assertions,
         "primary_assertions_passed": len(primary_failed) == 0,

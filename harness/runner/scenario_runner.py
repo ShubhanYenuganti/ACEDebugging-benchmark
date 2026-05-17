@@ -12,7 +12,9 @@ from harness.runner.deployment_handler import (
     _ARTIFACT_BUCKET,
     _STACK_NAME,
     _ensure_artifact_bucket,
+    find_handler_for_s3key,
     handle_submission,
+    handler_to_arcname,
 )
 from harness.runner.context_builder import corpus_dir_for_scenario
 from harness.shared.file_differ import snapshot
@@ -20,28 +22,44 @@ from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import init_run, log_tool_call
 
 
-def _parse_pytest_output(output: str) -> dict:
+def _parse_assertion_output(output: str) -> dict:
+    """Parse functional_test.py output.
+
+    Each line follows: `ASSERT pass|fail <name>: <message>`. Primary assertions
+    have no `_secondary` suffix; only their failures fail the run.
+    """
     passed, failed = [], []
-    lines = output.splitlines()
-    for i, line in enumerate(lines):
-        m = re.match(r"(PASSED|FAILED)\s+\S+::(\w+)", line)
+    for line in output.splitlines():
+        m = re.match(r"ASSERT\s+(pass|fail)\s+(\w+):\s*(.*)", line.strip())
         if not m:
             continue
-        status, name = m.group(1), m.group(2)
-        entry = {"name": name, "description": ""}
-        if status == "PASSED":
+        verdict, name, message = m.group(1), m.group(2), m.group(3)
+        entry = {"name": name, "description": message}
+        if verdict == "pass":
             passed.append(entry)
         else:
-            short_error = ""
-            for j in range(i + 1, min(i + 10, len(lines))):
-                stripped = lines[j].strip()
-                err = stripped[1:].strip() if stripped.startswith("E ") else stripped
-                if err.startswith(("AssertionError", "KeyError", "ValueError", "TypeError")):
-                    short_error = err
-                    break
-            entry["short_error"] = short_error
+            entry["short_error"] = message
             failed.append(entry)
-    return {"all_passed": len(failed) == 0, "passed": passed, "failed": failed}
+    primary_failed = [t for t in failed if "_secondary" not in t["name"]]
+    if not passed and not failed:
+        # Functional test produced no parseable assertions — almost always a
+        # crashed or mis-configured test. Treat as failure so the agent retries
+        # and the scorer doesn't credit a non-run as success.
+        synthetic = {
+            "name": "__no_assertions__",
+            "description": "functional_test.py emitted no ASSERT lines",
+            "short_error": (
+                "no ASSERT pass|fail lines were produced. The test likely "
+                "crashed before reaching any assertion (import error, "
+                "missing dependency, network error in setup, etc.)."
+            ),
+        }
+        return {"all_passed": False, "passed": [], "failed": [synthetic]}
+    return {
+        "all_passed": len(primary_failed) == 0,
+        "passed": passed,
+        "failed": failed,
+    }
 
 
 class ScenarioRunner:
@@ -57,6 +75,12 @@ class ScenarioRunner:
         scenario_id = os.path.basename(self.scenario_dir)
         init_run(run_id, scenario_id)
         self.start_snapshot = snapshot(self.deployment_dir)
+        template_path = os.path.join(self.scenario_dir, "faulted.yaml")
+        if os.path.exists(template_path):
+            with open(template_path, "r", encoding="utf-8") as _f:
+                self.start_faulted_yaml = _f.read()
+        else:
+            self.start_faulted_yaml = ""
 
     def _upload_initial_lambda_zips(self) -> None:
         template_path = os.path.join(self.scenario_dir, "faulted.yaml")
@@ -83,10 +107,16 @@ class ScenarioRunner:
         _ensure_artifact_bucket()
         for s3_key in s3_keys:
             key_stem = os.path.splitext(os.path.basename(s3_key))[0]
-            py_path = py_by_stem.get(key_stem) or next(iter(py_by_stem.values()))
+            py_path = py_by_stem.get(key_stem)
+            if py_path is None:
+                # Skip rather than silently uploading the wrong file under this key.
+                continue
+            # Derive arcname from the Lambda's Handler so the runtime finds the module.
+            handler = find_handler_for_s3key(template_body, s3_key)
+            arcname = handler_to_arcname(handler)
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.write(py_path, arcname="index.py")
+                zf.write(py_path, arcname=arcname)
             s3_client.put_object(
                 Bucket=_ARTIFACT_BUCKET, Key=s3_key, Body=buf.getvalue()
             )
@@ -152,14 +182,33 @@ class ScenarioRunner:
         functional_test = corpus_dir / "functional_test.py"
         if not functional_test.exists():
             raise FileNotFoundError(f"functional_test.py not found: {functional_test}")
+        # functional_test.py is a standalone script using the
+        # `ASSERT pass|fail <name>: <message>` protocol — not pytest.
         proc = subprocess.run(
-            [sys.executable, "-m", "pytest", str(functional_test),
-             "-v", "--tb=line", "--no-header"],
+            [sys.executable, str(functional_test)],
             capture_output=True,
             text=True,
             timeout=120,
         )
-        return _parse_pytest_output(proc.stdout + "\n" + proc.stderr)
+        parsed = _parse_assertion_output(proc.stdout + "\n" + proc.stderr)
+        if proc.returncode != 0:
+            # Tests that crashed mid-run leave inconsistent state — don't credit.
+            stderr_tail = (
+                proc.stderr.strip().splitlines()[-1]
+                if proc.stderr.strip()
+                else "(empty)"
+            )
+            crash = {
+                "name": "__test_crashed__",
+                "description": f"functional_test.py exited with code {proc.returncode}",
+                "short_error": (
+                    f"test process exited with code {proc.returncode}; "
+                    f"stderr tail: {stderr_tail}"
+                ),
+            }
+            parsed["all_passed"] = False
+            parsed["failed"] = list(parsed.get("failed", [])) + [crash]
+        return parsed
 
     def on_model_redeploy(self) -> dict:
         with self._lock:
@@ -167,7 +216,7 @@ class ScenarioRunner:
                 return {"outcome": "already_submitted"}
             self.submitted = True
         try:
-            result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot)
+            result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot, self.start_faulted_yaml)
         except Exception:
             self._last_deployment_outcome = "error"
             raise
@@ -178,7 +227,7 @@ class ScenarioRunner:
         with self._lock:
             if self.submitted:
                 return {"success": False, "error": "Already submitted (final)."}
-        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot)
+        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot, self.start_faulted_yaml)
         outcome = result.get("outcome", "unknown")
         success = outcome == "deploy_success"
         if success:
@@ -192,7 +241,7 @@ class ScenarioRunner:
         }
 
     def attempt_redeployment(self) -> dict:
-        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot)
+        result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot, self.start_faulted_yaml)
         outcome = result.get("outcome", "unknown")
         return {
             "success": outcome == "deploy_success",
