@@ -243,6 +243,9 @@ class ScenarioRunner:
     def attempt_redeployment(self) -> dict:
         result = handle_submission(self.scenario_dir, self.run_id, self.start_snapshot, self.start_faulted_yaml)
         outcome = result.get("outcome", "unknown")
+        # Mirror attempt_deployment: keep _last_deployment_outcome reflecting
+        # the LATEST deploy state so run.py's verify gate uses fresh data.
+        self._last_deployment_outcome = outcome
         return {
             "success": outcome == "deploy_success",
             "error": result.get("error", outcome),

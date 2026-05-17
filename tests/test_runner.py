@@ -527,3 +527,29 @@ def test_attempt_redeployment_returns_failure_dict(tmp_path, mocker):
     result = runner.attempt_redeployment()
     assert result["success"] is False
     assert "no changes" in result["error"]
+
+
+def test_attempt_redeployment_updates_last_deployment_outcome(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-xyz")
+    runner._last_deployment_outcome = "deploy_success"  # from earlier attempt
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value={"outcome": "deploy_fail", "events": []},
+    )
+    runner.attempt_redeployment()
+    assert runner._last_deployment_outcome == "deploy_fail"
+
+
+def test_attempt_redeployment_updates_outcome_on_success(tmp_path, mocker):
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-xyz")
+    runner._last_deployment_outcome = "deploy_fail"
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value={"outcome": "deploy_success"},
+    )
+    runner.attempt_redeployment()
+    assert runner._last_deployment_outcome == "deploy_success"
