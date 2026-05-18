@@ -70,9 +70,11 @@ Resources:
                   - sqs:ReceiveMessage
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
+                  - sqs:PurgeQueue
                 Resource: !GetAtt InventoryUpdatesQueue.Arn
               - Effect: Allow
-                Action: dynamodb:PutItem
+                Action:
+                  - dynamodb:PutItem
                 Resource: !GetAtt InventoryUpdatesTable.Arn
 
   CSVProcessingToSQSFunction:
@@ -80,12 +82,13 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-csv-to-sqs'
       Runtime: python3.11
-      Handler: index.lambda_handler
+      Handler: csv-to-sqs.lambda_handler
       Role: !GetAtt InventoryFunctionRole.Arn
       Timeout: 60
       Environment:
         Variables:
           SQS_QUEUE_URL: !Ref InventoryUpdatesQueue
+          LOCALSTACK_HOSTNAME: !Sub 'localhost'
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: csv-to-sqs.zip
@@ -95,12 +98,13 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-sqs-to-dynamodb'
       Runtime: python3.11
-      Handler: index.lambda_handler
+      Handler: sqs-to-dynamodb.lambda_handler
       Role: !GetAtt InventoryFunctionRole.Arn
       Timeout: 60
       Environment:
         Variables:
           DYNAMODB_TABLE_NAME: !Ref InventoryUpdatesTable
+          LOCALSTACK_HOSTNAME: !Sub 'localhost'
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: sqs-to-dynamodb.zip

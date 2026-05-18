@@ -7,7 +7,6 @@ import boto3
 s3 = boto3.client("s3")
 sqs = boto3.client("sqs")
 
-
 def lambda_handler(event, context):
     sent = 0
     for record in event.get("Records", []):
@@ -17,6 +16,9 @@ def lambda_handler(event, context):
         csv_content = response["Body"].read().decode("utf-8-sig")
         batch = []
         for row in csv.DictReader(csv_content.splitlines()):
+            # Adjust the key conversion logic if necessary
+            if 'qty' in row:
+                row["quantity"] = row.pop("qty")  # Ensure JSON keys match DynamoDB fields
             batch.append({"Id": str(len(batch) + 1), "MessageBody": json.dumps(row)})
             if len(batch) == 10:
                 sqs.send_message_batch(QueueUrl=os.environ["SQS_QUEUE_URL"], Entries=batch)

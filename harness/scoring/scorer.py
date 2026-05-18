@@ -1,5 +1,6 @@
 import json
 import pathlib
+from harness.runner.context_builder import corpus_dir_for_scenario
 from harness.scoring.agent import SCORING_MODEL
 from harness.scoring import gate
 from harness.scoring.dimensions import (
@@ -19,12 +20,18 @@ def _load_json(path: pathlib.Path) -> dict:
     return json.loads(path.read_text())
 
 
-def _derive_arch_id(scenario_id: str, scenario_dir: pathlib.Path) -> str:
+def _resolve_corpus_dir(scenario_dir: pathlib.Path, base: pathlib.Path) -> pathlib.Path:
+    """Locate the corpus directory for a scenario.
+
+    Scenario IDs look like 'arch12_fault07_data_correctness' but corpus
+    directories are named like 'arch_12_event_driven_architecture_...'.
+    `corpus_dir_for_scenario` extracts the arch number and finds the
+    matching corpus dir by 'arch_<NN>_' prefix.
+    """
     arch_id_file = scenario_dir / "arch_id.txt"
     if arch_id_file.exists():
-        return arch_id_file.read_text().strip()
-    parts = scenario_id.split("_fault_")
-    return parts[0] if len(parts) == 2 else scenario_id
+        return base / "corpus" / arch_id_file.read_text().strip()
+    return corpus_dir_for_scenario(scenario_dir, corpus_root=base / "corpus")
 
 
 def _write_zero(run_dir: pathlib.Path, run_id: str, scenario_id: str, reason: str, quality_gate_met: bool = True) -> dict:
@@ -50,8 +57,7 @@ def score_run(run_id: str, base_dir: str) -> dict:
 
     scenario_id = (run_dir / "scenario_id.txt").read_text().strip()
     scenario_dir = base / "scenarios" / scenario_id
-    arch_id = _derive_arch_id(scenario_id, scenario_dir)
-    corpus_dir = base / "corpus" / arch_id
+    corpus_dir = _resolve_corpus_dir(scenario_dir, base)
 
     required = [
         run_dir / "verify_result.json",

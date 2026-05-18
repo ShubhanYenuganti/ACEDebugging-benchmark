@@ -19,14 +19,14 @@ def _accept_reverse(player_id, friend_id, timestamp):
     try:
         table.update_item(
             Key={"player_id": friend_id, "friend_id": player_id},
-            ConditionExpression="#state = :requested",
+            ConditionExpression="#state = :pending",
             UpdateExpression="SET #state = :friends, #last_updated = :timestamp",
             ExpressionAttributeNames={
                 "#state": "state",
                 "#last_updated": "last_updated",
             },
             ExpressionAttributeValues={
-                ":requested": "Requested",
+                ":pending": "Pending",
                 ":friends": "Friends",
                 ":timestamp": timestamp,
             },

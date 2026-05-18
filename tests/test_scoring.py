@@ -345,7 +345,7 @@ def test_scorer_writes_score_json(mock_q, mock_e, mock_id, tmp_path):
     mock_e.return_value = '{"rationale": "efficient"}'
     mock_q.return_value = '{"score": 1.0, "classification": "root_cause", "rationale": "clean"}'
 
-    scenario_id = "arch_01_order_processing_fault_01"
+    scenario_id = "arch01_fault01_order_processing"
     arch_id = "arch_01_order_processing"
     run_id = "test-run-001"
 
@@ -374,7 +374,7 @@ def test_scorer_writes_score_json(mock_q, mock_e, mock_id, tmp_path):
 @patch("harness.scoring.dimensions.efficiency.call_scoring_agent")
 @patch("harness.scoring.dimensions.quality.call_scoring_agent")
 def test_scorer_zero_on_did_not_deploy(mock_q, mock_e, mock_id, tmp_path):
-    scenario_id = "arch_01_order_processing_fault_01"
+    scenario_id = "arch01_fault01_order_processing"
     arch_id = "arch_01_order_processing"
     run_id = "test-run-002"
     verify_failed = dict(SAMPLE_VERIFY, outcome="did_not_deploy")

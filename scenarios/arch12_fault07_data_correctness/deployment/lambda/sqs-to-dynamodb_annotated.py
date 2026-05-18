@@ -16,7 +16,7 @@ def lambda_handler(event, context):
                 "id": {"S": str(uuid.uuid4())},
                 "product_id": {"S": body["product_id"]},
                 "location": {"S": body["location"]},
-                "quantity": {"N": str(body["qty"])},  # FAULT INJECTION
+                "quantity": {"N": str(body["quantity"])},
                 "update_date": {"S": body["update_date"]},
             },
         )
