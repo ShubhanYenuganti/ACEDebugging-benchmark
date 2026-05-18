@@ -26,7 +26,11 @@ class Pass1Step:
             if not _manifest.get("baseline_idempotent", True):
                 skipped = AssertionRunResult(crash_reason="skipped_non_idempotent")
                 ctx.pass1_result = skipped
-                return {"skipped": True, "reason": "baseline_not_idempotent"}
+                return {
+                    "baseline": "skipped_non_idempotent",
+                    "passed": None,
+                    "baseline_passed": None,
+                }
         result = run_pass1(ctx.corpus_dir)
         ctx.pass1_result = result
         return result.to_baseline_dict()

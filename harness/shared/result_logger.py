@@ -37,6 +37,21 @@ def log_tool_call(
         path.write_text(json.dumps(data, indent=2))
 
 
+def log_text_mode_failure(run_id: str, turn: int, raw: str, error: str) -> None:
+    """Append one text-mode parse failure record to results/<run_id>/text_mode_failures.json."""
+    path = Path(RESULTS_DIR) / run_id / "text_mode_failures.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"turn": turn, "raw_preview": (raw or "")[:300], "error": error}
+    existing: list = []
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing = []
+    existing.append(entry)
+    path.write_text(json.dumps(existing, indent=2))
+
+
 def log_file_change(run_id: str, diff: dict) -> None:
     path = Path(RESULTS_DIR) / run_id / "file_change_log.json"
     path.write_text(json.dumps(diff, indent=2))

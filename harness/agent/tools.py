@@ -169,14 +169,16 @@ def dispatch_file_tool(name: str, inputs: dict, scenario_dir: str) -> str:
     if name == "write_file":
         rel = inputs.get("path", "")
         content = inputs.get("content", "")
+        # Fail fast on oversized content before any path resolution.
+        content_bytes = len(content.encode("utf-8"))
+        if content_bytes > WRITE_MAX_BYTES:
+            return f"Error: content for {rel} is too large ({content_bytes} bytes; limit {WRITE_MAX_BYTES})."
         norm = rel.replace("\\", "/")
         if not (norm.startswith("deployment/") or norm == "faulted.yaml"):
             return f"Error: writing to {rel} is not allowed. Only deployment/ files and faulted.yaml may be modified."
         target = _safe_resolve(rel)
         if target is None:
             return "Error: path traversal not allowed."
-        if len(content.encode("utf-8")) > WRITE_MAX_BYTES:
-            return f"Error: content for {rel} is too large ({len(content.encode('utf-8'))} bytes; limit {WRITE_MAX_BYTES})."
         orphan_err = _check_lambda_orphan(rel, scenario_root)
         if orphan_err is not None:
             return orphan_err

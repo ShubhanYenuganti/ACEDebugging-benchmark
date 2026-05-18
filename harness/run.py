@@ -23,13 +23,28 @@ from harness.verify.verify_loop import run_verify_loop
 
 
 def _recover_hidden_manifest(scenario_dir: str) -> None:
-    """Restore fault_manifest.json if a previous run crashed during the rename window."""
+    """Restore fault_manifest.json if a previous run crashed during the rename window.
+
+    Idempotent: does nothing when the manifest is present or when neither file exists.
+    Only acts when the .hidden artifact is on disk without a real manifest.
+    """
     manifest = os.path.join(scenario_dir, "fault_manifest.json")
     hidden = manifest + ".hidden"
     if os.path.isfile(hidden) and not os.path.isfile(manifest):
         os.rename(hidden, manifest)
-    elif os.path.isfile(hidden) and os.path.isfile(manifest):
-        os.remove(hidden)
+
+
+def _resolve_deployment_outcome(runner) -> str:
+    """Select the deployment outcome to pass to run_verify_loop.
+
+    Once submitted=True, the scored outcome is locked to the initial deploy so
+    retry failures cannot retroactively change what is evaluated.
+    """
+    if runner.submission_state.submitted:
+        return runner._initial_deployment_outcome
+    if runner._last_deployment_outcome == "unknown":
+        return "no_submission"
+    return runner._last_deployment_outcome
 
 
 def _validate_scenario(scenario_dir: str) -> None:
@@ -374,13 +389,8 @@ def main() -> None:
             traceback.print_exc()
             sys.exit(1)
 
-    # Step 8 — resolve scored deployment outcome:
-    # use the frozen initial outcome when available (retries must not overwrite it).
-    _scored_outcome = runner.initial_deployment_outcome
-    if _scored_outcome == "unknown":
-        _scored_outcome = runner._last_deployment_outcome
-    if _scored_outcome == "unknown":
-        _scored_outcome = "no_submission"
+    # Step 8 — resolve scored deployment outcome (frozen at first success).
+    _scored_outcome = _resolve_deployment_outcome(runner)
 
     # Step 9 — verify loop
     verify_result = run_verify_loop(

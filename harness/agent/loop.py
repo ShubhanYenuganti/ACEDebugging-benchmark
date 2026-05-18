@@ -87,20 +87,17 @@ def _extract_text_tool_calls(
 
 
 def _append_text_mode_failures(run_id: str, failures: list[dict]) -> None:
-    """Append parse-failure records to results/<run_id>/text_mode_failures.json."""
-    if not failures:
-        return
-    path = os.path.join("results", run_id, "text_mode_failures.json")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    existing: list = []
-    if os.path.isfile(path):
+    """Forward parse-failure records to result_logger.log_text_mode_failure."""
+    for entry in failures or []:
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            existing = []
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(existing + failures, f, indent=2)
+            result_logger.log_text_mode_failure(
+                run_id,
+                turn=entry.get("turn", 0),
+                raw=entry.get("raw_preview", ""),
+                error=entry.get("error", ""),
+            )
+        except OSError:
+            pass
 
 
 _MCP_SERVER_SCRIPT = os.path.abspath(
@@ -185,6 +182,7 @@ async def run_agent_loop(
     redeploy_callback=None,
     verify_callback=None,
     max_test_retries: int = 5,
+    max_no_tool_failures: int = 3,
 ) -> bool:
     """Drive the model through the scenario. Returns True if submit_fix was called."""
     async with _start_mcp_session(harness_api_key) as session:
@@ -198,7 +196,7 @@ async def run_agent_loop(
             {"role": "user", "content": f"{context['scenario_brief']}\n\n{context['instruction']}"},
         ]
         submitted = False
-        retried_no_tool = False
+        consecutive_no_tool_failures = 0
         writes_made = 0
         retry_count = 0
         writes_since_last_submit = 0
@@ -266,35 +264,45 @@ async def run_agent_loop(
             })
 
             if not effective_tool_calls:
-                if not retried_no_tool:
-                    retried_no_tool = True
-                    if verbose:
-                        print(f"[turn {turn}] no tool call extracted — retrying with stronger prompt", flush=True)
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "You did NOT emit a valid tool call. Do not echo prior outputs. "
-                            'Respond with ONLY a single JSON object: {"name": "<tool>", "arguments": {...}}. '
-                            "Pick ANY diagnostic tool you have not yet used and call it now, "
-                            "or call submit_fix if you are ready."
-                        ),
-                    })
-                    continue
+                consecutive_no_tool_failures += 1
+                content_preview = (msg.content or "")[:300]
                 try:
-                    result_logger.log_tool_call(
+                    result_logger.log_text_mode_failure(
                         run_id,
                         turn=turn,
-                        tool="__no_tool_call__",
-                        input={"finish": finish, "content_preview": (msg.content or "")[:120]},
-                        output={"reason": "no_tool_call_after_retry"},
-                        timestamp=datetime.datetime.utcnow().isoformat(),
+                        raw=content_preview,
+                        error="no_tool_call_extracted",
                     )
                 except OSError:
                     pass
                 if verbose:
-                    print(f"[turn {turn}] model stopped after retry (finish={finish})", flush=True)
-                break
-            retried_no_tool = False
+                    print(
+                        f"[turn {turn}] no tool call extracted "
+                        f"(consecutive={consecutive_no_tool_failures}, "
+                        f"max={max_no_tool_failures})",
+                        flush=True,
+                    )
+                if consecutive_no_tool_failures >= max_no_tool_failures:
+                    retry_msg = (
+                        f"Warning: you have failed to emit a valid tool call "
+                        f"{consecutive_no_tool_failures} times in a row.\n"
+                        f"Your last output was:\n  {content_preview}\n"
+                        "This run will exhaust its turn budget if you do not "
+                        "emit a properly fenced JSON tool call. Use EXACTLY this format:\n"
+                        '```json\n{"name": "<tool_name>", "arguments": {<args>}}\n```'
+                    )
+                else:
+                    retry_msg = (
+                        "You did not emit a valid tool call. Your output was:\n"
+                        f"  {content_preview}\n"
+                        "Respond with ONLY a fenced JSON block, nothing else:\n"
+                        '```json\n{"name": "<tool_name>", "arguments": {<args>}}\n```\n'
+                        'Do NOT wrap in {"id":...,"type":...,"function":...}. '
+                        "Do NOT add prose."
+                    )
+                messages.append({"role": "user", "content": retry_msg})
+                continue
+            consecutive_no_tool_failures = 0
             if finish in ("stop", "end_turn") and not synthesized:
                 if verbose:
                     print(f"[turn {turn}] model stopped (finish={finish})", flush=True)

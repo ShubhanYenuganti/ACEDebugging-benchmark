@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -18,6 +19,8 @@ from harness.shared.file_differ import snapshot
 from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import init_run, log_tool_call
 from harness.shared.types import AssertionRunResult, DeploymentResult, SubmissionState
+
+RESULTS_DIR = "results"
 
 
 class ScenarioRunner:
@@ -155,10 +158,10 @@ class ScenarioRunner:
         )
         self.submission_state.deploy_attempts += 1
         self.submission_state.last_outcome = result.outcome
-        if is_initial and result.success and self.submission_state.initial_deployment_outcome == "unknown":
-            self.submission_state.initial_deployment_outcome = result.outcome
         if is_initial and result.success:
             with self._lock:
+                if self.submission_state.initial_deployment_outcome == "unknown":
+                    self.submission_state.initial_deployment_outcome = result.outcome
                 self.submission_state.submitted = True
             self._write_submitted_yaml()
         return result
@@ -166,14 +169,11 @@ class ScenarioRunner:
     def _write_submitted_yaml(self) -> None:
         """Snapshot faulted.yaml → results/<run_id>/submitted.yaml for Pass 3."""
         src = os.path.join(self.scenario_dir, "faulted.yaml")
-        dst_dir = os.path.join("results", self.run_id)
+        dst_dir = os.path.join(RESULTS_DIR, self.run_id)
         os.makedirs(dst_dir, exist_ok=True)
         dst = os.path.join(dst_dir, "submitted.yaml")
         if os.path.isfile(src):
-            with open(src, "r", encoding="utf-8") as f:
-                content = f.read()
-            with open(dst, "w", encoding="utf-8") as f:
-                f.write(content)
+            shutil.copy2(src, dst)
 
     @property
     def submitted(self) -> bool:
@@ -192,5 +192,5 @@ class ScenarioRunner:
         self.submission_state.last_outcome = v
 
     @property
-    def initial_deployment_outcome(self) -> str:
+    def _initial_deployment_outcome(self) -> str:
         return self.submission_state.initial_deployment_outcome

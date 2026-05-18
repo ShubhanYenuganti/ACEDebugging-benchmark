@@ -412,13 +412,17 @@ def test_mcp_tool_calls_are_logged(tmp_path):
     """MCP tool calls (not file tools) are passed to result_logger.log_tool_call."""
     from harness.agent.loop import run_agent_loop
 
-    responses = [
-        _make_litellm_response("tool_calls", tool_calls=[_make_tool_call("tc1", "ace_invoke_lambda", {"function_name": "fn", "payload": {}})]),
-        _make_litellm_response("stop"),
-        _make_litellm_response("stop"),
-    ]
+    # Loop no longer break-exits on consecutive no-tool turns; it runs to max_turns.
+    # Pad with stop responses so the mock side_effect does not exhaust.
+    def _resp_factory():
+        yield _make_litellm_response(
+            "tool_calls",
+            tool_calls=[_make_tool_call("tc1", "ace_invoke_lambda", {"function_name": "fn", "payload": {}})],
+        )
+        while True:
+            yield _make_litellm_response("stop")
 
-    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+    with patch("harness.agent.loop.litellm.completion", side_effect=_resp_factory()), \
          patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx, \
          patch("harness.agent.loop.result_logger.log_tool_call") as mock_log:
 
@@ -460,13 +464,15 @@ def test_file_tool_calls_not_logged(tmp_path):
 
     (tmp_path / "deployment").mkdir()
 
-    responses = [
-        _make_litellm_response("tool_calls", tool_calls=[_make_tool_call("tc1", "list_directory", {"path": "deployment"})]),
-        _make_litellm_response("stop"),
-        _make_litellm_response("stop"),
-    ]
+    def _resp_factory():
+        yield _make_litellm_response(
+            "tool_calls",
+            tool_calls=[_make_tool_call("tc1", "list_directory", {"path": "deployment"})],
+        )
+        while True:
+            yield _make_litellm_response("stop")
 
-    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+    with patch("harness.agent.loop.litellm.completion", side_effect=_resp_factory()), \
          patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx, \
          patch("harness.agent.loop.result_logger.log_tool_call") as mock_log:
 
@@ -486,14 +492,8 @@ def test_file_tool_calls_not_logged(tmp_path):
             max_turns=5,
         ))
 
-    # file tools must not be logged; __no_tool_call__ sentinel is permitted
-    logged_tools = [
-        (kw.get("tool") or a[2])
-        for a, kw in mock_log.call_args_list
-    ]
-    assert all(t == "__no_tool_call__" for t in logged_tools), (
-        f"Unexpected tool logged: {logged_tools}"
-    )
+    # file tool dispatches must not be reported via result_logger.log_tool_call
+    mock_log.assert_not_called()
 
 
 # ── deploy_callback tests ─────────────────────────────────────────────────────
@@ -650,30 +650,29 @@ def test_deploy_callback_refuses_submit_without_new_write(tmp_path):
 
     deploy_callback = MagicMock(return_value=DeploymentResult(outcome="no_changes", error="no changes"))
 
-    responses = [
+    def _resp_factory():
         # turn 1: write_file
-        _make_litellm_response("tool_calls", tool_calls=[
+        yield _make_litellm_response("tool_calls", tool_calls=[
             _make_tool_call("tc0", "write_file",
                             {"path": "deployment/handler.py", "content": "# fix"})
-        ]),
+        ])
         # turn 2: submit_fix (deploy_callback returns failure)
-        _make_litellm_response("tool_calls", tool_calls=[
+        yield _make_litellm_response("tool_calls", tool_calls=[
             _make_tool_call("tc1", "submit_fix", {})
-        ]),
-        # turn 3: submit_fix again without any write_file in between — must be refused
-        _make_litellm_response("tool_calls", tool_calls=[
+        ])
+        # turn 3: submit_fix again without any write_file — must be refused
+        yield _make_litellm_response("tool_calls", tool_calls=[
             _make_tool_call("tc2", "submit_fix", {})
-        ]),
-        # turn 4: write_file, then exit via stop
-        _make_litellm_response("tool_calls", tool_calls=[
+        ])
+        # turn 4: write_file, then keep stopping until max_turns exhausts
+        yield _make_litellm_response("tool_calls", tool_calls=[
             _make_tool_call("tc3", "write_file",
                             {"path": "deployment/handler.py", "content": "# fix v2"})
-        ]),
-        _make_litellm_response("stop"),
-        _make_litellm_response("stop"),
-    ]
+        ])
+        while True:
+            yield _make_litellm_response("stop")
 
-    with patch("harness.agent.loop.litellm.completion", side_effect=responses), \
+    with patch("harness.agent.loop.litellm.completion", side_effect=_resp_factory()), \
          patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
 
         sess = _mock_mcp_session(["ace_invoke_lambda"])
