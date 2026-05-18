@@ -262,19 +262,6 @@ class TestScenarioRunner:
         assert "Already submitted" in result2.error
         assert mock_handle.call_count == 1
 
-    def test_intercept_tool_call_increments_count_and_logs(self, tmp_path, mocker):
-        scenario_dir = self._make_scenario(tmp_path)
-        mocker.patch("harness.runner.scenario_runner.init_run")
-        mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
-        mock_log = mocker.patch("harness.runner.scenario_runner.log_tool_call")
-        runner = ScenarioRunner(scenario_dir, "run-test-2")
-        runner.intercept_tool_call("ace_invoke_lambda", {"fn": "MyFn"}, {"status": 200})
-        runner.intercept_tool_call("ace_get_log_tail", {"fn": "MyFn"}, {"logs": []})
-        assert runner.tool_call_count == 2
-        assert mock_log.call_count == 2
-        first_call_args = mock_log.call_args_list[0]
-        assert first_call_args.args[2] == "ace_invoke_lambda"
-
 
 def test_deploy_initial_returns_success(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
@@ -544,3 +531,199 @@ def test_deploy_increments_attempt_counter(tmp_path, mocker):
     runner.deploy(is_initial=False)
     runner.deploy(is_initial=False)
     assert runner.submission_state.deploy_attempts == 3
+
+
+# ---------------------------------------------------------------------------
+# template_parser integration — find_source_for_stem, _zip_dir, packaging plan
+# ---------------------------------------------------------------------------
+
+from harness.runner.deployment_handler import find_source_for_stem, _zip_dir
+
+
+def test_find_source_for_stem_prefers_directory(tmp_path):
+    d = tmp_path / "lambda" / "handler"
+    d.mkdir(parents=True)
+    (d / "handler.py").write_text("# handler")
+    (tmp_path / "lambda" / "handler.py").write_text("# flat")
+    path, is_dir = find_source_for_stem(str(tmp_path), "handler")
+    assert is_dir is True
+    assert path == str(d)
+
+
+def test_find_source_for_stem_flat_fallback(tmp_path):
+    (tmp_path / "lambda").mkdir()
+    flat = tmp_path / "lambda" / "handler.py"
+    flat.write_text("# flat handler")
+    path, is_dir = find_source_for_stem(str(tmp_path), "handler")
+    assert is_dir is False
+    assert path == str(flat)
+
+
+def test_find_source_for_stem_returns_none_when_missing(tmp_path):
+    path, is_dir = find_source_for_stem(str(tmp_path), "nonexistent")
+    assert path is None
+    assert is_dir is False
+
+
+def test_find_source_for_stem_non_lambda_subdir(tmp_path):
+    d = tmp_path / "glue" / "etl"
+    d.mkdir(parents=True)
+    (d / "etl.py").write_text("# glue job")
+    path, is_dir = find_source_for_stem(str(tmp_path), "etl")
+    assert is_dir is True
+    assert path == str(d)
+
+
+def test_zip_dir_includes_all_files(tmp_path):
+    import io as _io
+    d = tmp_path / "handler"
+    d.mkdir()
+    (d / "handler.py").write_text("# main")
+    (d / "utils.py").write_text("# helper")
+    sub = d / "models"
+    sub.mkdir()
+    (sub / "schema.py").write_text("# schema")
+    zip_bytes = _zip_dir(str(d))
+    with zipfile.ZipFile(_io.BytesIO(zip_bytes)) as archive:
+        names = archive.namelist()
+    assert "handler.py" in names
+    assert "utils.py" in names
+    assert "models/schema.py" in names
+
+
+def test_build_packaging_plan_uses_dir_source(tmp_path):
+    import textwrap
+    from harness.runner.deployment_handler import _build_packaging_plan
+
+    template = tmp_path / "faulted.yaml"
+    template.write_text(textwrap.dedent("""
+        Resources:
+          Fn:
+            Type: AWS::Lambda::Function
+            Properties:
+              Handler: handler.lambda_handler
+              Code:
+                S3Key: handler.zip
+    """))
+    d = tmp_path / "lambda" / "handler"
+    d.mkdir(parents=True)
+    (d / "handler.py").write_text("# main")
+    diff = {
+        "files_modified": [os.path.join("lambda", "handler", "handler.py")],
+        "files_added": [],
+        "per_file_line_changes": {},
+    }
+    plan = _build_packaging_plan(diff, str(template), str(tmp_path), "run-test")
+    assert len(plan.uploads) == 1
+    assert plan.uploads[0].is_dir is True
+    assert plan.uploads[0].stem == "handler"
+    assert plan.uploads[0].source_path == str(d)
+
+
+def test_build_packaging_plan_stem_collision_raises(tmp_path):
+    import textwrap
+    import unittest.mock as mock
+    from harness.runner.deployment_handler import _build_packaging_plan
+
+    template = tmp_path / "faulted.yaml"
+    template.write_text(textwrap.dedent("""
+        Resources:
+          FnA:
+            Type: AWS::Lambda::Function
+            Properties:
+              Code:
+                S3Key: handler.zip
+    """))
+    shared_path = str(tmp_path / "lambda" / "shared")
+    # Patch both extract_s3key_stems and find_source_for_stem so that two
+    # distinct stems both resolve to the exact same source path, triggering
+    # the collision guard in _build_packaging_plan.
+    with mock.patch(
+        "harness.runner.deployment_handler.extract_s3key_stems",
+        return_value={"handler": "handler.zip", "worker": "worker.zip"},
+    ), mock.patch(
+        "harness.runner.deployment_handler.find_source_for_stem",
+        return_value=(shared_path, True),
+    ):
+        diff2 = {
+            "files_modified": [
+                os.path.join("lambda", "shared", "handler.py"),
+                os.path.join("lambda", "shared", "worker.py"),
+            ],
+            "files_added": [],
+            "per_file_line_changes": {},
+        }
+        with pytest.raises(ValueError, match="Stem collision"):
+            _build_packaging_plan(diff2, str(template), str(tmp_path), "run-col")
+
+
+def test_build_packaging_plan_glue_subdir(tmp_path):
+    import textwrap
+    from harness.runner.deployment_handler import _build_packaging_plan
+
+    template = tmp_path / "faulted.yaml"
+    template.write_text(textwrap.dedent("""
+        Resources:
+          GlueJob:
+            Type: AWS::Glue::Job
+            Properties:
+              Code:
+                S3Key: etl.zip
+    """))
+    d = tmp_path / "glue" / "etl"
+    d.mkdir(parents=True)
+    (d / "etl.py").write_text("# glue")
+    diff = {
+        "files_modified": [os.path.join("glue", "etl", "etl.py")],
+        "files_added": [],
+        "per_file_line_changes": {},
+    }
+    plan = _build_packaging_plan(diff, str(template), str(tmp_path), "run-glue")
+    assert len(plan.uploads) == 1
+    assert plan.uploads[0].stem == "etl"
+
+
+def test_upload_initial_lambda_zips_uses_directory_source(tmp_path, mocker):
+    """ScenarioRunner._upload_initial_lambda_zips() uploads a dir-based Lambda zip."""
+    import textwrap, io as _io, zipfile as _zf
+
+    scenario_dir = tmp_path / "scenario"
+    scenario_dir.mkdir()
+    (scenario_dir / "scenario.md").write_text("symptom")
+    (scenario_dir / "fault_manifest.json").write_text('{"architecture": "arch_01_test"}')
+    template = scenario_dir / "faulted.yaml"
+    template.write_text(textwrap.dedent("""
+        AWSTemplateFormatVersion: '2010-09-09'
+        Resources:
+          Fn:
+            Type: AWS::Lambda::Function
+            Properties:
+              Handler: handler.lambda_handler
+              Code:
+                S3Bucket: ace-bench-artifacts
+                S3Key: handler.zip
+    """))
+    deployment = scenario_dir / "deployment"
+    handler_dir = deployment / "lambda" / "handler"
+    handler_dir.mkdir(parents=True)
+    (handler_dir / "handler.py").write_text("def lambda_handler(e, c): return {}")
+    (handler_dir / "utils.py").write_text("# helper")
+
+    mock_s3 = MagicMock()
+    mocker.patch("harness.runner.scenario_runner.s3_client", mock_s3)
+    mocker.patch("harness.runner.scenario_runner.cf_client", MagicMock())
+    mocker.patch("harness.runner.scenario_runner._ensure_artifact_bucket")
+    mocker.patch("harness.runner.scenario_runner.init_run")
+
+    runner = ScenarioRunner(str(scenario_dir), "run-init-test")
+    runner._upload_initial_lambda_zips()
+
+    assert mock_s3.put_object.called
+    call_kwargs = mock_s3.put_object.call_args.kwargs
+    assert call_kwargs["Key"] == "handler.zip"
+
+    zip_bytes = call_kwargs["Body"]
+    with _zf.ZipFile(_io.BytesIO(zip_bytes)) as archive:
+        names = archive.namelist()
+    assert "handler.py" in names
+    assert "utils.py" in names

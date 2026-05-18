@@ -7,6 +7,7 @@ import zipfile
 from botocore.exceptions import ClientError, WaiterError
 
 from harness.shared.cfn_lint_runner import run_lint
+from harness.shared.template_parser import extract_s3key_stems
 from harness.shared.file_differ import diff_snapshots, extract_line_changes, snapshot
 from harness.shared.localstack_client import cf_client, s3_client
 from harness.shared.result_logger import log_deployment, log_file_change
@@ -74,40 +75,116 @@ def _zip_file(file_path: str, arcname: str) -> bytes:
     return buf.getvalue()
 
 
-def _build_packaging_plan(diff: dict, template_body: str, deployment_dir: str, run_id: str) -> PackagingPlan:
-    """Compute what to upload and what to skip from a deployment diff.
+def _zip_dir(dir_path: str) -> bytes:
+    """Zip all files under dir_path, preserving relative paths within the dir."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for dirpath, _dirnames, filenames in os.walk(dir_path):
+            for filename in sorted(filenames):
+                abs_file = os.path.join(dirpath, filename)
+                arcname = os.path.relpath(abs_file, dir_path)
+                zf.write(abs_file, arcname=arcname)
+    return buf.getvalue()
 
-    A modified .py file under deployment/lambda/ becomes a LambdaUpload if its
-    stem matches an S3Key in the template; otherwise it's recorded as an orphan
-    so the caller can surface that to the agent.
+
+def find_source_for_stem(deployment_dir: str, stem: str) -> tuple[str | None, bool]:
+    """Return (abs_path, is_dir) for the Lambda source matching `stem`.
+
+    Searches deployment_dir recursively. Prefers a subdirectory named `stem`
+    (directory-based packaging) over a flat `stem.py` file (legacy layout).
+    Returns (None, False) if no match is found.
     """
+    deployment_dir = os.path.abspath(deployment_dir)
+    for dirpath, dirnames, _filenames in os.walk(deployment_dir):
+        for d in dirnames:
+            if d == stem:
+                return os.path.join(dirpath, d), True
+    for dirpath, _dirnames, filenames in os.walk(deployment_dir):
+        for f in filenames:
+            if f == stem + ".py":
+                return os.path.join(dirpath, f), False
+    return None, False
+
+
+def _path_to_package_stem(rel_path: str, known_stems: set[str]) -> str | None:
+    """Return the package stem for a changed file path, or None if not in known_stems.
+
+    Handles flat layout ('lambda/handler.py' → 'handler') and directory layout
+    ('lambda/handler/utils.py' → 'handler').
+    """
+    import pathlib as _pathlib
+    norm = rel_path.replace("\\", "/")
+    parts = _pathlib.PurePosixPath(norm).parts
+    for part in parts:
+        candidate = _pathlib.PurePosixPath(part).stem if part.endswith(".py") else part
+        if candidate in known_stems:
+            return candidate
+    return None
+
+
+def _build_packaging_plan(diff: dict, template_path: str, deployment_dir: str, run_id: str) -> PackagingPlan:
+    """Compute what to upload from a deployment diff.
+
+    Uses YAML-parsed S3Key stems so quoted values and CFN intrinsics are handled
+    correctly. Locates source packages (directory or flat .py) by stem under the
+    full deployment_dir tree, not just deployment/lambda/.
+    """
+    stems = extract_s3key_stems(template_path)
+    known_stems = set(stems.keys())
+
     plan = PackagingPlan()
-    lambda_rel_prefix = "lambda" + os.sep
+    affected_stems: set[str] = set()
     for rel_path in diff["files_modified"] + diff["files_added"]:
-        if not (rel_path.startswith(lambda_rel_prefix) and rel_path.endswith(".py")):
+        norm = rel_path.replace("\\", "/")
+        stem = _path_to_package_stem(rel_path, known_stems)
+        if stem:
+            affected_stems.add(stem)
+        elif norm.endswith(".py"):
+            plan.orphans.append(norm)
+    seen_source_paths: set[str] = set()
+
+    with open(template_path, "r", encoding="utf-8") as _f:
+        template_body_for_handler = _f.read()
+
+    for stem in sorted(affected_stems):
+        s3key_original = stems[stem]
+        source_path, is_dir = find_source_for_stem(deployment_dir, stem)
+        if source_path is None:
+            plan.orphans.append(stem)
             continue
-        abs_path = os.path.join(deployment_dir, "lambda", os.path.basename(rel_path))
-        stem = os.path.splitext(os.path.basename(abs_path))[0]
-        original_key = find_s3key_for_stem(template_body, stem)
-        if original_key is None:
-            plan.orphans.append(rel_path.replace(os.sep, "/"))
-            continue
-        handler = find_handler_for_s3key(template_body, original_key)
-        arcname = handler_to_arcname(handler)
-        # Hash the zip bytes (not the file bytes) so the S3Key reflects exactly
-        # what Lambda will execute (arcname matters).
-        zip_bytes = _zip_file(abs_path, arcname=arcname)
+
+        abs_source = os.path.abspath(source_path)
+        if abs_source in seen_source_paths:
+            raise ValueError(
+                f"Stem collision: '{stem}' resolves to source '{source_path}' "
+                "which is already claimed by another stem."
+            )
+        seen_source_paths.add(abs_source)
+
+        if is_dir:
+            zip_bytes = _zip_dir(source_path)
+            arcname = ""
+        else:
+            handler = find_handler_for_s3key(template_body_for_handler, s3key_original)
+            arcname = handler_to_arcname(handler)
+            zip_bytes = _zip_file(source_path, arcname=arcname)
+
         sha = hashlib.sha256(zip_bytes).hexdigest()[:12]
+        rel_display = os.path.relpath(source_path, deployment_dir)
         plan.uploads.append(LambdaUpload(
-            rel_path=rel_path.replace(os.sep, "/"),
+            rel_path=rel_display.replace(os.sep, "/"),
             stem=stem,
-            s3_key_original=original_key,
+            s3_key_original=s3key_original,
             s3_key_new=f"lambdas/{run_id}/{sha}/{stem}.zip",
             sha256=sha,
             arcname=arcname,
+            source_path=source_path,
+            is_dir=is_dir,
         ))
+
     if diff.get("per_file_line_changes", {}).get("faulted.yaml"):
         plan.template_changed = True
+
     return plan
 
 
@@ -160,15 +237,15 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, star
         template_body = f.read()
 
     # Step 3b — build packaging plan from diff + template
-    plan = _build_packaging_plan(diff, template_body, deployment_dir, run_id)
+    plan = _build_packaging_plan(diff, template_path, deployment_dir, run_id)
 
     # Step 3c — execute the plan: upload zips, mutate template body
     for upload in plan.uploads:
         _ensure_artifact_bucket()
-        zip_bytes = _zip_file(
-            os.path.join(deployment_dir, "lambda", os.path.basename(upload.rel_path)),
-            arcname=upload.arcname,
-        )
+        if upload.is_dir:
+            zip_bytes = _zip_dir(upload.source_path)
+        else:
+            zip_bytes = _zip_file(upload.source_path, arcname=upload.arcname)
         s3_client.put_object(Bucket=_ARTIFACT_BUCKET, Key=upload.s3_key_new, Body=zip_bytes)
         template_body = re.sub(
             r"(S3Key:\s*)" + re.escape(upload.s3_key_original) + r"(?=\s|$)",

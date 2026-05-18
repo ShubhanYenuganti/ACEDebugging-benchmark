@@ -23,6 +23,36 @@ for _cf_tag in ["!Sub", "!Ref", "!GetAtt", "!Select", "!Split", "!Join", "!If",
     yaml.SafeLoader.add_constructor(_cf_tag, _cf_constructor)
 
 
+_CFN_INTRINSIC_TAGS = {
+    "Fn::Sub", "Fn::If", "Fn::Select", "Fn::Split", "Fn::Join",
+    "Fn::FindInMap", "Fn::Base64", "Fn::ImportValue", "Fn::Transform",
+    "Fn::Cidr", "Condition",
+}
+
+
+def _cfn_normalize(value):
+    """Normalise a YAML-parsed CFN intrinsic dict to its string equivalent.
+
+    yaml.safe_load converts '!Ref Foo' to the string 'Foo', while fault
+    manifests (JSON) store the same value as {"Ref": "Foo"}.  Without this
+    normalisation structural_match is always False for templates that use
+    intrinsic functions.
+    """
+    if not isinstance(value, dict) or len(value) != 1:
+        return value
+    (key, val) = next(iter(value.items()))
+    if key == "Ref":
+        return val
+    if key == "Fn::GetAtt":
+        if isinstance(val, list) and len(val) == 2:
+            return f"{val[0]}.{val[1]}"
+        return val
+    if key in _CFN_INTRINSIC_TAGS:
+        if isinstance(val, str):
+            return val
+    return value
+
+
 # Splits a dotted segment like "Statement[0]" into ("Statement", [0]).
 # Supports any number of trailing indices, e.g. "Foo[0][1]".
 _SEGMENT_RE = re.compile(r"^([^\[]+)((?:\[\d+\])*)$")
@@ -86,7 +116,7 @@ def run_pass3(
     submitted_resources = (submitted_doc or {}).get("Resources", {})
     resource_node = submitted_resources.get(target_resource, {})
     submitted_value = _navigate(resource_node, target_property)
-    structural_match = submitted_value == original_value
+    structural_match = _cfn_normalize(submitted_value) == _cfn_normalize(original_value)
 
     # Signal 2 — invalid patch substring in diff text
     change_log_path = os.path.join(RESULTS_DIR, run_id, "file_change_log.json")

@@ -74,10 +74,12 @@ class TestCfnLintRunner:
         assert len(result["warnings"]) == 1
         assert result["warnings"][0]["rule"] == "W3010"
 
-    def test_raises_environment_error_when_cfn_lint_missing(self, monkeypatch):
+    def test_returns_warning_when_cfn_lint_missing(self, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda _: None)
-        with pytest.raises(EnvironmentError, match="cfn-lint is not installed"):
-            run_lint("any.yaml")
+        result = run_lint("any.yaml")
+        assert result["passed"] is True
+        assert result["fatal_errors"] == []
+        assert any(w["rule"] == "HARNESS_WARN_001" for w in result["warnings"])
 
 
 import os

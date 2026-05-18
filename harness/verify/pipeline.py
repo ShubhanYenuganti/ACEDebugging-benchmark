@@ -51,7 +51,7 @@ def downgrade_pass3_when_pass4_fails(ctx: VerifyContext) -> None:
     even if pass1's primary assertions passed."""
     pass4 = ctx.results.get("pass4_concurrency")
     pass3 = ctx.results.get("pass3_classification")
-    if pass4 is None or pass3 is None:
+    if not pass4 or pass4.get("skipped") or pass3 is None:
         return
     if pass4.get("passed"):
         return

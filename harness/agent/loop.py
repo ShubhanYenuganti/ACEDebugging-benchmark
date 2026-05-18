@@ -21,56 +21,42 @@ from harness.agent.tools import (
     mcp_to_openai_tool,
 )
 from harness.shared import result_logger
+from harness.shared.types import AssertionRunResult
 
-def _iter_json_objects(text: str):
-    """Yield top-level JSON objects from text using brace-depth tracking."""
-    depth = 0
-    start = -1
-    in_str = False
-    esc = False
-    for i, ch in enumerate(text):
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-            continue
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start >= 0:
-                yield text[start:i + 1]
-                start = -1
+_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.DOTALL)
 
 
-def _extract_text_tool_calls(content: str) -> list | None:
-    """Parse tool calls from model text for models that emit JSON instead of structured calls."""
+def _extract_text_tool_calls(
+    content: str, turn: int = 0
+) -> tuple[list | None, list[dict]]:
+    """Parse tool calls from fenced ```json``` blocks only.
+
+    Returns (tool_calls | None, parse_failures).  Free-text brace scanning is
+    intentionally omitted: models that emit valid JSON inside fenced blocks work
+    correctly; models that don't still get the retry prompt.
+    """
+    failures: list[dict] = []
     if not content:
-        return None
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.DOTALL).strip()
-    candidates = []
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            candidates.append(obj)
-    except (json.JSONDecodeError, ValueError):
-        for raw in _iter_json_objects(text):
-            try:
-                obj = json.loads(raw)
-                if isinstance(obj, dict):
-                    candidates.append(obj)
-            except (json.JSONDecodeError, ValueError):
-                pass
+        return None, failures
+
+    blocks = _FENCE_RE.findall(content)
+    if not blocks:
+        return None, failures
+
     result = []
-    for obj in candidates:
+    for raw_block in blocks:
+        raw_block = raw_block.strip()
+        try:
+            obj = json.loads(raw_block)
+        except (json.JSONDecodeError, ValueError) as exc:
+            failures.append({
+                "turn": turn,
+                "raw_preview": raw_block[:120],
+                "error": str(exc),
+            })
+            continue
+        if not isinstance(obj, dict):
+            continue
         # Reject echoed transport envelopes {"id":..., "type":..., "function": {...}}
         if "function" in obj and isinstance(obj["function"], dict) and "name" in obj["function"]:
             inner = obj["function"]
@@ -97,7 +83,24 @@ def _extract_text_tool_calls(content: str) -> list | None:
                 arguments=json.dumps(args),
             ),
         ))
-    return result or None
+    return result or None, failures
+
+
+def _append_text_mode_failures(run_id: str, failures: list[dict]) -> None:
+    """Append parse-failure records to results/<run_id>/text_mode_failures.json."""
+    if not failures:
+        return
+    path = os.path.join("results", run_id, "text_mode_failures.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    existing: list = []
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            existing = []
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(existing + failures, f, indent=2)
 
 
 _MCP_SERVER_SCRIPT = os.path.abspath(
@@ -150,15 +153,15 @@ def _build_system(context: dict) -> str:
     )
 
 
-def _format_test_summary(result: dict, attempt: int, max_retries: int) -> str:
-    n_passed = len(result.get("passed", []))
-    n_failed = len(result.get("failed", []))
+def _format_test_summary(result: AssertionRunResult, attempt: int, max_retries: int) -> str:
+    n_passed = len(result.passed)
+    n_failed = len(result.failed)
     lines = [f"Tests: {n_passed} passed, {n_failed} failed."]
-    for t in result.get("passed", []):
-        lines.append(f"[{t['name']}]: PASS")
-    for t in result.get("failed", []):
-        err = f" — {t['short_error']}" if t.get("short_error") else ""
-        lines.append(f"[{t['name']}]: FAIL{err}")
+    for a in result.passed:
+        lines.append(f"[{a.name}]: PASS")
+    for a in result.failed:
+        err = f" — {a.message}" if a.message else ""
+        lines.append(f"[{a.name}]: FAIL{err}")
     lines.append(
         f"Revise your fix with write_file and call submit_fix again. "
         f"(Attempt {attempt} of {max_retries}.)"
@@ -244,7 +247,9 @@ async def run_agent_loop(
             synthesized = False
             effective_tool_calls = msg.tool_calls
             if not effective_tool_calls:
-                effective_tool_calls = _extract_text_tool_calls(msg.content)
+                effective_tool_calls, _text_failures = _extract_text_tool_calls(msg.content, turn=turn)
+                if _text_failures:
+                    _append_text_mode_failures(run_id, _text_failures)
                 synthesized = effective_tool_calls is not None
 
             messages.append({
@@ -275,8 +280,19 @@ async def run_agent_loop(
                         ),
                     })
                     continue
+                try:
+                    result_logger.log_tool_call(
+                        run_id,
+                        turn=turn,
+                        tool="__no_tool_call__",
+                        input={"finish": finish, "content_preview": (msg.content or "")[:120]},
+                        output={"reason": "no_tool_call_after_retry"},
+                        timestamp=datetime.datetime.utcnow().isoformat(),
+                    )
+                except OSError:
+                    pass
                 if verbose:
-                    print(f"[turn {turn}] model stopped (finish={finish})", flush=True)
+                    print(f"[turn {turn}] model stopped after retry (finish={finish})", flush=True)
                 break
             retried_no_tool = False
             if finish in ("stop", "end_turn") and not synthesized:
@@ -344,14 +360,14 @@ async def run_agent_loop(
                                         verify_result = await asyncio.get_running_loop().run_in_executor(
                                             None, verify_callback
                                         )
-                                        if verify_result["all_passed"]:
+                                        if verify_result.all_passed:
                                             all_tests_passed = True
                                             result_lines = ["Fix deployed and all tests passed."]
-                                            for t in verify_result.get("passed", []):
-                                                result_lines.append(f"[{t['name']}]: PASS")
-                                            for t in verify_result.get("failed", []):
-                                                err = f" — {t['short_error']}" if t.get("short_error") else ""
-                                                result_lines.append(f"[{t['name']}]: FAIL{err}")
+                                            for a in verify_result.passed:
+                                                result_lines.append(f"[{a.name}]: PASS")
+                                            for a in verify_result.failed:
+                                                err = f" — {a.message}" if a.message else ""
+                                                result_lines.append(f"[{a.name}]: FAIL{err}")
                                             content = _skipped_msg + "\n".join(result_lines)
                                         elif test_retry_count >= max_test_retries:
                                             all_tests_passed = False

@@ -22,6 +22,16 @@ from harness.verify.pass1_functional import run_pass1
 from harness.verify.verify_loop import run_verify_loop
 
 
+def _recover_hidden_manifest(scenario_dir: str) -> None:
+    """Restore fault_manifest.json if a previous run crashed during the rename window."""
+    manifest = os.path.join(scenario_dir, "fault_manifest.json")
+    hidden = manifest + ".hidden"
+    if os.path.isfile(hidden) and not os.path.isfile(manifest):
+        os.rename(hidden, manifest)
+    elif os.path.isfile(hidden) and os.path.isfile(manifest):
+        os.remove(hidden)
+
+
 def _validate_scenario(scenario_dir: str) -> None:
     for item in ["scenario.md", "faulted.yaml", "fault_manifest.json", "deployment"]:
         if not os.path.exists(os.path.join(scenario_dir, item)):
@@ -102,7 +112,12 @@ def _print_summary(run_id: str, scenario_id: str, verify_result: dict, runner: "
     print(f"Classification:   {classification}")
     print(f"Concurrency:      {concurrency_str}")
     print()
-    print(f"Tool calls made:  {runner.tool_call_count}")
+    trace_path = os.path.join("results", run_id, "tool_call_trace.json")
+    tool_call_count = 0
+    if os.path.isfile(trace_path):
+        with open(trace_path) as _tf:
+            tool_call_count = len(json.load(_tf))
+    print(f"Tool calls made:  {tool_call_count}")
     print(f"Files changed:    {files_changed}")
     print(f"Lines changed:    {lines_changed}")
     print()
@@ -279,6 +294,7 @@ def main() -> None:
         sys.exit(1)
 
     # Step 3 — validate scenario directory structure
+    _recover_hidden_manifest(scenario_dir)
     _validate_scenario(scenario_dir)
 
     manifest_path = os.path.join(scenario_dir, "fault_manifest.json")
@@ -358,17 +374,19 @@ def main() -> None:
             traceback.print_exc()
             sys.exit(1)
 
-    # Step 8 — ensure deployment outcome is recorded
-    # (attempt_deployment sets _last_deployment_outcome on success;
-    #  if loop exited without a successful deploy, record it as no_submission)
-    if runner._last_deployment_outcome == "unknown":
-        runner._last_deployment_outcome = "no_submission"
+    # Step 8 — resolve scored deployment outcome:
+    # use the frozen initial outcome when available (retries must not overwrite it).
+    _scored_outcome = runner.initial_deployment_outcome
+    if _scored_outcome == "unknown":
+        _scored_outcome = runner._last_deployment_outcome
+    if _scored_outcome == "unknown":
+        _scored_outcome = "no_submission"
 
     # Step 9 — verify loop
     verify_result = run_verify_loop(
         scenario_dir=scenario_dir,
         run_id=run_id,
-        deployment_outcome=runner._last_deployment_outcome,
+        deployment_outcome=_scored_outcome,
         manifest_path=manifest_path,
         corpus_dir=corpus_dir,
         api_endpoint=ctx["stack_outputs"].get("ApiEndpoint", ""),

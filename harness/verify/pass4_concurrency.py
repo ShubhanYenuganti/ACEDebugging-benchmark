@@ -5,13 +5,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
 
+PASS4_SKIP_RESULT = {"skipped": True, "reason": "not_applicable"}
+
+
 class Pass4Step:
     name = "pass4_concurrency"
 
     def should_run(self, ctx) -> bool:
-        return ctx.fault_class in {"performance", "reliability"} and bool(ctx.api_endpoint)
+        return True
 
     def run(self, ctx):
+        if ctx.fault_class not in {"performance", "reliability"} or not ctx.api_endpoint:
+            return PASS4_SKIP_RESULT
         return run_pass4(ctx.scenario_dir, ctx.manifest_path, ctx.api_endpoint)
 
 

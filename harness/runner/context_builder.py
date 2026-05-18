@@ -61,7 +61,7 @@ def corpus_dir_for_scenario(
     corpus_root = Path(corpus_root)
     if not corpus_root.is_dir():
         raise FileNotFoundError(f"corpus_root does not exist: {corpus_root}")
-    m = re.match(r"arch(\d+)_", scenario_dir.name)
+    m = re.match(r"arch_?(\d+)_", scenario_dir.name)
     if not m:
         raise ValueError(f"Cannot parse arch number from: {scenario_dir.name}")
     arch_num = m.group(1).zfill(2)

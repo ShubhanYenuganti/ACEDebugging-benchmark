@@ -5,6 +5,9 @@ import re
 
 SIGNAL_FILE = os.environ.get("ACE_BENCH_SIGNAL_FILE", "/tmp/ace-bench-update.json")
 
+READ_MAX_BYTES = 1_048_576   # 1 MB
+WRITE_MAX_BYTES = 524_288    # 512 KB
+
 _BLOCKED_READS = {"fault_manifest.json", "known_good.yaml"}
 _SUBMIT_TOOL = "submit_fix"
 _FILE_TOOL_NAMES = {"read_file", "write_file", "list_directory", "submit_fix"}
@@ -106,36 +109,36 @@ FILE_TOOL_DEFINITIONS: list[dict] = [
 
 
 def _check_lambda_orphan(rel_path: str, scenario_root: pathlib.Path) -> str | None:
-    """Return an error message if rel_path is a deployment/lambda/*.py with no
-    matching S3Key in faulted.yaml; return None if the write is permitted.
+    """Return an error message if rel_path writes to deployment/ with no matching
+    S3Key stem in faulted.yaml; return None if the write is permitted.
 
-    The deployer matches Lambda files to template S3Keys by filename stem. A
-    file whose stem has no S3Key in the template will be silently skipped at
-    deploy time. Catching it here — before the write lands on disk — gives the
-    agent an immediate, actionable error instead of a confusing 'no_changes'
-    response two turns later.
+    Accepts writes where any path component (directory name or file stem) matches
+    a known stem from the YAML-parsed template, enabling both flat-file and
+    directory-based Lambda package layouts.
     """
+    from harness.shared.template_parser import extract_s3key_stems
+
     norm = rel_path.replace("\\", "/")
-    if not (norm.startswith("deployment/lambda/") and norm.endswith(".py")):
+    if not norm.startswith("deployment/") or not norm.endswith(".py"):
         return None
     template_path = scenario_root / "faulted.yaml"
     if not template_path.exists():
         return None
-    template_body = template_path.read_text(encoding="utf-8")
-    stem = pathlib.Path(norm).stem
-    available_stems = {
-        os.path.basename(m)
-        for m in re.findall(r"S3Key:\s*(\S+)\.zip\b", template_body)
-    }
-    if stem in available_stems:
+    stems = extract_s3key_stems(str(template_path))
+    if not stems:
         return None
+
+    parts = norm[len("deployment/"):].split("/")
+    for part in parts:
+        candidate = os.path.splitext(part)[0] if part.endswith(".py") else part
+        if candidate in stems:
+            return None
+
     return (
-        f"Error: deployment/lambda/{stem}.py has no matching S3Key in "
-        f"faulted.yaml. The deployer matches Lambda files to template S3Keys "
-        f"by filename stem; available stems: {sorted(available_stems)}. "
-        f"Either rename your edit to match one of these (e.g. "
-        f"deployment/lambda/<stem>.py), or first edit faulted.yaml to add "
-        f"an S3Key matching your filename."
+        f"Error: no matching S3Key found for write to {rel_path}. "
+        f"Available stems from faulted.yaml: {sorted(stems.keys())}. "
+        f"Either rename your file/directory to match one of these stems, "
+        f"or edit faulted.yaml to add an S3Key for your target stem."
     )
 
 
@@ -159,6 +162,8 @@ def dispatch_file_tool(name: str, inputs: dict, scenario_dir: str) -> str:
             return "Error: path traversal not allowed."
         if not target.exists():
             return f"Error: {rel} does not exist."
+        if target.stat().st_size > READ_MAX_BYTES:
+            return f"Error: {rel} is too large to read ({target.stat().st_size} bytes; limit {READ_MAX_BYTES})."
         return target.read_text(encoding="utf-8")
 
     if name == "write_file":
@@ -170,6 +175,8 @@ def dispatch_file_tool(name: str, inputs: dict, scenario_dir: str) -> str:
         target = _safe_resolve(rel)
         if target is None:
             return "Error: path traversal not allowed."
+        if len(content.encode("utf-8")) > WRITE_MAX_BYTES:
+            return f"Error: content for {rel} is too large ({len(content.encode('utf-8'))} bytes; limit {WRITE_MAX_BYTES})."
         orphan_err = _check_lambda_orphan(rel, scenario_root)
         if orphan_err is not None:
             return orphan_err

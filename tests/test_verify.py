@@ -474,7 +474,7 @@ class TestVerifyLoop:
             corpus_dir="corpus",
             api_endpoint="http://localhost:4566",
         )
-        assert result["pass4_concurrency"] is None
+        assert result["pass4_concurrency"] == {"skipped": True, "reason": "not_applicable"}
 
     def test_pass4_failure_overrides_pass3_to_partial(self, tmp_path, monkeypatch):
         monkeypatch.setattr(vlmod, "log_verify_result", lambda *a, **kw: None)

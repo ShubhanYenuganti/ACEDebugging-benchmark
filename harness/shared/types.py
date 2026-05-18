@@ -18,13 +18,15 @@ DeploymentOutcome = Literal[
 
 @dataclass
 class LambdaUpload:
-    """One Lambda file packaged for a submission."""
-    rel_path: str            # e.g. "lambda/handler.py"
+    """One Lambda package queued for a submission."""
+    rel_path: str            # e.g. "lambda/handler.py" or "lambda/handler"
     stem: str                # e.g. "handler"
     s3_key_original: str     # e.g. "handler.zip"
     s3_key_new: str          # e.g. "lambdas/<run>/<sha>/handler.zip"
     sha256: str
-    arcname: str             # e.g. "index.py" (derived from Handler)
+    arcname: str             # e.g. "index.py" (derived from Handler; "" for dir zips)
+    source_path: str = ""    # absolute path to the source file or directory
+    is_dir: bool = False     # True when source_path is a directory
 
 
 @dataclass
@@ -72,6 +74,7 @@ class SubmissionState:
     submitted: bool = False
     last_outcome: DeploymentOutcome = "unknown"
     deploy_attempts: int = 0
+    initial_deployment_outcome: DeploymentOutcome = "unknown"
 
 
 @dataclass

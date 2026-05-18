@@ -101,6 +101,87 @@ def test_write_file_blocks_path_traversal(tmp_path):
     assert "not allowed" in result.lower()
 
 
+def test_write_file_orphan_check_uses_yaml_parse(tmp_path):
+    """write_file accepts a path whose stem appears as a YAML-parsed S3Key."""
+    from harness.agent.tools import dispatch_file_tool
+    (tmp_path / "faulted.yaml").write_text(
+        "Resources:\n"
+        "  Fn:\n"
+        "    Type: AWS::Lambda::Function\n"
+        "    Properties:\n"
+        "      Code:\n"
+        '        S3Key: "lambdas/handler.zip"\n'
+    )
+    (tmp_path / "deployment" / "lambda").mkdir(parents=True)
+    result = dispatch_file_tool(
+        "write_file",
+        {"path": "deployment/lambda/handler.py", "content": "# fix\n"},
+        str(tmp_path),
+    )
+    assert result.startswith("Written"), f"Unexpected: {result}"
+
+
+def test_write_file_orphan_check_sub_intrinsic(tmp_path):
+    """write_file accepts a write whose stem appears inside a !Sub S3Key."""
+    from harness.agent.tools import dispatch_file_tool
+    (tmp_path / "faulted.yaml").write_text(
+        "Resources:\n"
+        "  Fn:\n"
+        "    Type: AWS::Lambda::Function\n"
+        "    Properties:\n"
+        "      Code:\n"
+        "        S3Key: !Sub '${Bucket}/processor.zip'\n"
+    )
+    (tmp_path / "deployment" / "lambda").mkdir(parents=True)
+    result = dispatch_file_tool(
+        "write_file",
+        {"path": "deployment/lambda/processor.py", "content": "# fix\n"},
+        str(tmp_path),
+    )
+    assert result.startswith("Written"), f"Unexpected: {result}"
+
+
+def test_write_file_orphan_check_dir_write_accepted(tmp_path):
+    """write_file accepts a write to deployment/lambda/<stem>/file.py when stem in template."""
+    from harness.agent.tools import dispatch_file_tool
+    (tmp_path / "faulted.yaml").write_text(
+        "Resources:\n"
+        "  Fn:\n"
+        "    Type: AWS::Lambda::Function\n"
+        "    Properties:\n"
+        "      Code:\n"
+        "        S3Key: worker.zip\n"
+    )
+    (tmp_path / "deployment" / "lambda" / "worker").mkdir(parents=True)
+    result = dispatch_file_tool(
+        "write_file",
+        {"path": "deployment/lambda/worker/utils.py", "content": "# helper\n"},
+        str(tmp_path),
+    )
+    assert result.startswith("Written"), f"Unexpected: {result}"
+
+
+def test_write_file_orphan_check_unknown_stem_rejected(tmp_path):
+    """write_file rejects a deployment/lambda/*.py whose stem is absent from template."""
+    from harness.agent.tools import dispatch_file_tool
+    (tmp_path / "faulted.yaml").write_text(
+        "Resources:\n"
+        "  Fn:\n"
+        "    Type: AWS::Lambda::Function\n"
+        "    Properties:\n"
+        "      Code:\n"
+        "        S3Key: handler.zip\n"
+    )
+    (tmp_path / "deployment" / "lambda").mkdir(parents=True)
+    result = dispatch_file_tool(
+        "write_file",
+        {"path": "deployment/lambda/ghost.py", "content": "# oops\n"},
+        str(tmp_path),
+    )
+    assert result.startswith("Error:"), f"Expected error, got: {result}"
+    assert "ghost" in result
+
+
 def test_list_directory(tmp_path):
     from harness.agent.tools import dispatch_file_tool
     (tmp_path / "deployment" / "lambda").mkdir(parents=True)
@@ -357,9 +438,9 @@ def test_mcp_tool_calls_are_logged(tmp_path):
             max_turns=5,
         ))
 
-    mock_log.assert_called_once()
-    args, kwargs = mock_log.call_args
-    tool_name = kwargs.get("tool") or args[2]
+    assert mock_log.call_count >= 1
+    first_args, first_kwargs = mock_log.call_args_list[0]
+    tool_name = first_kwargs.get("tool") or first_args[2]
     assert tool_name == "ace_invoke_lambda"
 
 
@@ -405,7 +486,14 @@ def test_file_tool_calls_not_logged(tmp_path):
             max_turns=5,
         ))
 
-    mock_log.assert_not_called()
+    # file tools must not be logged; __no_tool_call__ sentinel is permitted
+    logged_tools = [
+        (kw.get("tool") or a[2])
+        for a, kw in mock_log.call_args_list
+    ]
+    assert all(t == "__no_tool_call__" for t in logged_tools), (
+        f"Unexpected tool logged: {logged_tools}"
+    )
 
 
 # ── deploy_callback tests ─────────────────────────────────────────────────────
