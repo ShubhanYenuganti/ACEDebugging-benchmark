@@ -510,6 +510,19 @@ test("ace_get_stream_records: missing args returns error", async () => {
   assert.ok(result.error);
 });
 
+test("ace_get_stream_records accepts iterator_type parameter", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_get_stream_records");
+  assert.ok(t, "ace_get_stream_records must exist");
+  const result = await t.handler({ stream_arn: "arn:aws:dynamodb:us-east-1:000000000000:table/nonexistent/stream/2020-01-01T00:00:00.000" });
+  assert.ok(result.error, "nonexistent stream should return error");
+});
+
+test("ace_get_stream_records returns error for missing stream_arn", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_get_stream_records");
+  const result = await t.handler({});
+  assert.ok(result.error, "missing stream_arn should return error");
+});
+
 test("ace_describe_dynamo_stream: nonexistent stream ARN returns error", async () => {
   const result = await observeExtendedTools.find(t => t.name === "ace_describe_dynamo_stream")
     .handler({ stream_arn: "arn:aws:dynamodb:us-east-1:000000000000:table/no-table/stream/2020-01-01T00:00:00.000" });

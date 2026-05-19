@@ -338,13 +338,16 @@ export const probeExtendedTools = [
   },
   {
     name: "ace_get_stream_records",
-    description: "Read recent records from the latest shard of a DynamoDB stream",
+    description: "Read recent records from up to 4 shards of a DynamoDB stream. Defaults to LATEST to avoid replaying stale data.",
     inputSchema: {
       type: "object",
-      properties: { stream_arn: { type: "string" } },
+      properties: {
+        stream_arn: { type: "string" },
+        iterator_type: { type: "string", enum: ["LATEST", "TRIM_HORIZON"] },
+      },
       required: ["stream_arn"],
     },
-    async handler({ stream_arn } = {}) {
+    async handler({ stream_arn, iterator_type = "LATEST" } = {}) {
       if (!stream_arn) return { error: "stream_arn is required" };
       try {
         const descRes = await dynamoStreamsClient.send(
@@ -352,25 +355,30 @@ export const probeExtendedTools = [
         );
         const shards = descRes.StreamDescription?.Shards ?? [];
         if (shards.length === 0) return { records: [], shard_count: 0 };
-        const shard_id = shards[shards.length - 1].ShardId;
-        const iterRes = await dynamoStreamsClient.send(new GetShardIteratorCommand({
-          StreamArn: stream_arn,
-          ShardId: shard_id,
-          ShardIteratorType: "TRIM_HORIZON",
-        }));
-        const recordsRes = await dynamoStreamsClient.send(new GetRecordsCommand({
-          ShardIterator: iterRes.ShardIterator,
-          Limit: 10,
-        }));
-        return {
-          records: (recordsRes.Records ?? []).map(r => ({
-            event_name: r.eventName,
-            keys: r.dynamodb?.Keys ? unmarshall(r.dynamodb.Keys) : {},
-            new_image: r.dynamodb?.NewImage ? unmarshall(r.dynamodb.NewImage) : null,
-            old_image: r.dynamodb?.OldImage ? unmarshall(r.dynamodb.OldImage) : null,
-          })),
-          shard_count: shards.length,
-        };
+        const targetShards = shards.slice(-4);
+        const allRecords = [];
+        for (const shard of targetShards) {
+          const iterRes = await dynamoStreamsClient.send(new GetShardIteratorCommand({
+            StreamArn: stream_arn,
+            ShardId: shard.ShardId,
+            ShardIteratorType: iterator_type,
+          }));
+          const recordsRes = await dynamoStreamsClient.send(new GetRecordsCommand({
+            ShardIterator: iterRes.ShardIterator,
+            Limit: 10,
+          }));
+          for (const r of (recordsRes.Records ?? [])) {
+            allRecords.push({
+              event_name: r.eventName,
+              keys: r.dynamodb?.Keys ? unmarshall(r.dynamodb.Keys) : {},
+              new_image: r.dynamodb?.NewImage ? unmarshall(r.dynamodb.NewImage) : null,
+              old_image: r.dynamodb?.OldImage ? unmarshall(r.dynamodb.OldImage) : null,
+            });
+            if (allRecords.length >= 20) break;
+          }
+          if (allRecords.length >= 20) break;
+        }
+        return { records: allRecords, shard_count: shards.length };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "DYNAMO_STREAMS_ERROR" };
       }
