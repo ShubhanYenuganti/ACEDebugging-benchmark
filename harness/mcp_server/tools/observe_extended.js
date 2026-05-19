@@ -20,6 +20,7 @@ import { S3ControlClient, GetPublicAccessBlockCommand } from "@aws-sdk/client-s3
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { CloudWatchClient, GetMetricStatisticsCommand } from "@aws-sdk/client-cloudwatch";
 import { CloudWatchLogsClient, FilterLogEventsCommand } from "@aws-sdk/client-cloudwatch-logs";
+import { CloudFormationClient, DescribeStackEventsCommand } from "@aws-sdk/client-cloudformation";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -46,6 +47,7 @@ const s3ControlClient = new S3ControlClient(awsConfig);
 const s3Client = new S3Client(awsConfig);
 const cwClient = new CloudWatchClient(awsConfig);
 const logsClient = new CloudWatchLogsClient(awsConfig);
+const cfClient = new CloudFormationClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -654,6 +656,38 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "LOGS_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_stack_events",
+    description: "Get recent CloudFormation stack events for ace-bench-stack, ordered newest first. Use status_filter='FAILED' to see only failed transitions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number" },
+        status_filter: { type: "string", enum: ["FAILED", "ALL"] },
+      },
+    },
+    async handler({ limit = 20, status_filter = "ALL" } = {}) {
+      const clampedLimit = Math.min(Math.max(1, limit ?? 20), 50);
+      try {
+        const res = await cfClient.send(new DescribeStackEventsCommand({ StackName: "ace-bench-stack" }));
+        let events = (res.StackEvents ?? []).slice(0, clampedLimit);
+        if (status_filter === "FAILED") {
+          events = events.filter(e =>
+            e.ResourceStatus?.includes("FAILED") || e.ResourceStatus?.includes("ROLLBACK")
+          );
+        }
+        return events.map(e => ({
+          timestamp: e.Timestamp?.toISOString() ?? null,
+          logical_id: e.LogicalResourceId ?? null,
+          resource_type: e.ResourceType ?? null,
+          status: e.ResourceStatus ?? null,
+          reason: e.ResourceStatusReason ?? null,
+        }));
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "CF_ERROR" };
       }
     },
   },

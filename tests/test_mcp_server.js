@@ -949,3 +949,37 @@ test("ace_filter_log_events clamps limit and start_minutes_ago", async () => {
   assert.ok(!result.error);
   assert.ok(result.count <= 100, "count must not exceed 100");
 });
+
+// === CloudFormation Stack Events ===
+test("ace_get_stack_events tool exists", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_stack_events");
+  assert.ok(t, "ace_get_stack_events must exist");
+});
+
+test("ace_get_stack_events returns events array for ace-bench-stack", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_stack_events");
+  const result = await t.handler({});
+  assert.ok(!result.error, `unexpected error: ${JSON.stringify(result.error)}`);
+  assert.ok(Array.isArray(result), "result must be an array");
+  if (result.length > 0) {
+    const e = result[0];
+    assert.ok("timestamp" in e, "event must have timestamp");
+    assert.ok("logical_id" in e, "event must have logical_id");
+    assert.ok("status" in e, "event must have status");
+  }
+});
+
+test("ace_get_stack_events status_filter FAILED returns subset", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_stack_events");
+  const all = await t.handler({ status_filter: "ALL" });
+  const failed = await t.handler({ status_filter: "FAILED" });
+  assert.ok(!all.error && !failed.error);
+  assert.ok(failed.length <= all.length, "FAILED filter must return <= ALL events");
+});
+
+test("ace_get_stack_events clamps limit to 50", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_stack_events");
+  const result = await t.handler({ limit: 999 });
+  assert.ok(!result.error);
+  assert.ok(result.length <= 50);
+});
