@@ -207,6 +207,20 @@ test("ace_check_s3_object: nonexistent bucket returns exists:false", async () =>
   assert.equal(result.exists, false);
 });
 
+test("ace_invoke_endpoint accepts output_key override", async () => {
+  const t = tool(probeTools, "ace_invoke_endpoint");
+  const result = await t.handler({ path: "/", method: "GET", output_key: "ApiEndpoint" });
+  assert.ok(result.error !== "ApiEndpoint not found in stack outputs",
+    `should not get old hardcoded error; got: ${JSON.stringify(result)}`);
+});
+
+test("ace_invoke_endpoint falls back to pattern search when no output_key", async () => {
+  const t = tool(probeTools, "ace_invoke_endpoint");
+  const result = await t.handler({ path: "/", method: "GET" });
+  assert.ok(result.error !== "No ApiEndpoint or ApiUrl output found in stack outputs",
+    `pattern search should find ApiEndpoint in stack; got: ${JSON.stringify(result)}`);
+});
+
 // Observe tools
 test("ace_list_resources: returns array", async () => {
   const result = await tool(observeTools, "ace_list_resources").handler({});

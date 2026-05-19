@@ -36,32 +36,34 @@ export const probeTools = [
         path: { type: "string" },
         method: { type: "string", enum: ["GET", "POST", "PUT", "DELETE", "PATCH"] },
         payload: { type: "object" },
+        output_key: { type: "string" },
       },
       required: ["path", "method"],
     },
-    async handler({ path, method, payload }) {
+    async handler({ path, method, payload, output_key }) {
       if (!path) return { error: "path is required" };
       if (!method) return { error: "method is required" };
       const start = Date.now();
       try {
         const outputs = await getStackOutputs();
-        const base = outputs["ApiEndpoint"];
-        if (!base) return { error: "ApiEndpoint not found in stack outputs" };
+        let base;
+        if (output_key) {
+          base = outputs[output_key];
+        } else {
+          const entry = Object.entries(outputs).find(([k]) => /Api(Endpoint|Url)/i.test(k));
+          base = entry?.[1];
+        }
+        if (!base) return { error: "No ApiEndpoint or ApiUrl output found in stack outputs" };
         const url = base.replace(/\/$/, "") + path;
         const res = await fetch(url, {
           method,
           headers: { "Content-Type": "application/json" },
           body: payload ? JSON.stringify(payload) : undefined,
         });
-        const latency_ms = Date.now() - start;
-        let body;
-        try { body = await res.json(); } catch { body = await res.text(); }
-        return {
-          status_code: res.status,
-          latency_ms,
-          body,
-          error_type: res.ok ? null : `HTTP_${res.status}`,
-        };
+        const duration_ms = Date.now() - start;
+        let response_body;
+        try { response_body = await res.json(); } catch { response_body = await res.text(); }
+        return { status_code: res.status, response_body, duration_ms };
       } catch (err) {
         return { error: err.message, error_type: "NETWORK_ERROR" };
       }
