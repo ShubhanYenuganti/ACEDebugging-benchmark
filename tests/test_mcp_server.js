@@ -198,6 +198,20 @@ test("ace_check_event_source includes filter_criteria field", async () => {
   }
 });
 
+test("ace_check_event_source accepts event_source_arn param", async () => {
+  const t = tool(probeTools, "ace_check_event_source");
+  // A real SQS queue ARN — no mappings exist in test setup, so expect empty array or error-free response
+  const result = await t.handler({ event_source_arn: `arn:aws:sqs:us-east-1:000000000000:${QUEUE}` });
+  assert.ok(!result.error, `unexpected error: ${JSON.stringify(result.error)}`);
+  assert.ok(Array.isArray(result), "result must be an array");
+});
+
+test("ace_check_event_source returns error when neither param given", async () => {
+  const t = tool(probeTools, "ace_check_event_source");
+  const result = await t.handler({});
+  assert.ok(result.error, "missing both params should return error");
+});
+
 test("ace_check_s3_object: nonexistent bucket returns exists:false", async () => {
   const result = await tool(probeTools, "ace_check_s3_object").handler({
     bucket: "no-such-bucket-xyz123",

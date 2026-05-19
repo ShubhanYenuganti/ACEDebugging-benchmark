@@ -163,18 +163,22 @@ export const probeTools = [
   },
   {
     name: "ace_check_event_source",
-    description: "List Lambda event source mappings for a function",
+    description: "List Lambda event source mappings, filtered by function name or event source ARN (at least one required)",
     inputSchema: {
       type: "object",
-      properties: { function_name: { type: "string" } },
-      required: ["function_name"],
+      properties: {
+        function_name: { type: "string" },
+        event_source_arn: { type: "string" },
+      },
     },
-    async handler({ function_name }) {
-      if (!function_name) return { error: "function_name is required" };
+    async handler({ function_name, event_source_arn } = {}) {
+      if (!function_name && !event_source_arn)
+        return { error: "function_name or event_source_arn is required" };
       try {
-        const res = await lambdaClient.send(new ListEventSourceMappingsCommand({
-          FunctionName: function_name,
-        }));
+        const params = {};
+        if (function_name) params.FunctionName = function_name;
+        if (event_source_arn) params.EventSourceArn = event_source_arn;
+        const res = await lambdaClient.send(new ListEventSourceMappingsCommand(params));
         return (res.EventSourceMappings ?? []).map(m => ({
           source_arn: m.EventSourceArn,
           source_type: m.EventSourceArn?.split(":")[2] ?? "unknown",
