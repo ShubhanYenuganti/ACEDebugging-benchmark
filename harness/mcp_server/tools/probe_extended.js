@@ -583,11 +583,13 @@ export const probeExtendedTools = [
         action_names: { type: "array", items: { type: "string" } },
         resource_arns: { type: "array", items: { type: "string" } },
       },
-      required: ["policy_source_arn", "action_names"],
+      required: ["policy_source_arn", "action_names", "resource_arns"],
     },
-    async handler({ policy_source_arn, action_names, resource_arns = ["*"] } = {}) {
+    async handler({ policy_source_arn, action_names, resource_arns } = {}) {
       if (!policy_source_arn || !action_names?.length)
         return { error: "policy_source_arn and action_names are required" };
+      if (!resource_arns?.length)
+        return { error: "resource_arns is required — pass [\"*\"] to simulate against all resources, or specific ARNs for accurate results on scoped policies" };
       try {
         const res = await iamClient.send(new SimulatePrincipalPolicyCommand({
           PolicySourceArn: policy_source_arn,

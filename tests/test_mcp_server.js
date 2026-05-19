@@ -698,6 +698,17 @@ test("ace_simulate_policy: missing args returns error", async () => {
   assert.ok(result.error);
 });
 
+test("ace_simulate_policy returns error when resource_arns omitted", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_simulate_policy");
+  assert.ok(t, "ace_simulate_policy must exist");
+  const result = await t.handler({
+    policy_source_arn: "arn:aws:iam::000000000000:role/test-role",
+    action_names: ["dynamodb:GetItem"],
+  });
+  assert.ok(result.error, `should error when resource_arns is omitted; got: ${JSON.stringify(result)}`);
+  assert.ok(/resource_arns/i.test(result.error), "error message must mention resource_arns");
+});
+
 // === DynamoDB Query (ace_scan_table_range) ===
 test("ace_scan_table_range returns items matching key condition", async () => {
   const t = probeExtendedTools.find(t => t.name === "ace_scan_table_range");
