@@ -820,3 +820,35 @@ test("ace_get_s3_object_content returns error for nonexistent object", async () 
   const result = await t.handler({ bucket: "nonexistent-bucket-xyz", key: "file.json" });
   assert.ok(result.error, "nonexistent object should return error");
 });
+
+test("ace_filter_log_events tool exists", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_filter_log_events");
+  assert.ok(t, "ace_filter_log_events must exist");
+});
+
+test("ace_filter_log_events returns events array for Lambda with logs", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_filter_log_events");
+  const result = await t.handler({ function_name: FN, filter_pattern: "ERROR" });
+  assert.ok(!result.error, `unexpected error: ${JSON.stringify(result.error)}`);
+  assert.ok(Array.isArray(result.events), "events must be an array");
+  assert.ok(typeof result.count === "number", "count must be a number");
+});
+
+test("ace_filter_log_events returns error for missing function_name", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_filter_log_events");
+  const result = await t.handler({ filter_pattern: "ERROR" });
+  assert.ok(result.error, "missing function_name should return error");
+});
+
+test("ace_filter_log_events returns error for missing filter_pattern", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_filter_log_events");
+  const result = await t.handler({ function_name: FN });
+  assert.ok(result.error, "missing filter_pattern should return error");
+});
+
+test("ace_filter_log_events clamps limit and start_minutes_ago", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_filter_log_events");
+  const result = await t.handler({ function_name: FN, filter_pattern: "INFO", limit: 999, start_minutes_ago: 9999 });
+  assert.ok(!result.error);
+  assert.ok(result.count <= 100, "count must not exceed 100");
+});

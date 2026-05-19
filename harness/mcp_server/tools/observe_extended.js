@@ -19,6 +19,7 @@ import { SSMClient, DescribeParametersCommand } from "@aws-sdk/client-ssm";
 import { S3ControlClient, GetPublicAccessBlockCommand } from "@aws-sdk/client-s3-control";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { CloudWatchClient, GetMetricStatisticsCommand } from "@aws-sdk/client-cloudwatch";
+import { CloudWatchLogsClient, FilterLogEventsCommand } from "@aws-sdk/client-cloudwatch-logs";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -44,6 +45,7 @@ const ssmClient = new SSMClient(awsConfig);
 const s3ControlClient = new S3ControlClient(awsConfig);
 const s3Client = new S3Client(awsConfig);
 const cwClient = new CloudWatchClient(awsConfig);
+const logsClient = new CloudWatchLogsClient(awsConfig);
 
 export const observeExtendedTools = [
   {
@@ -611,6 +613,47 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "S3_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_filter_log_events",
+    description: "Search a Lambda's CloudWatch logs across all streams using a CloudWatch filter pattern. Use filter_pattern like 'ERROR', '?KeyError ?ValidationError', or '[level=ERROR, ...]'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        function_name: { type: "string" },
+        filter_pattern: { type: "string" },
+        start_minutes_ago: { type: "number" },
+        limit: { type: "number" },
+      },
+      required: ["function_name", "filter_pattern"],
+    },
+    async handler({ function_name, filter_pattern, start_minutes_ago = 30, limit = 30 } = {}) {
+      if (!function_name) return { error: "function_name is required" };
+      if (!filter_pattern) return { error: "filter_pattern is required" };
+      const clampedLimit = Math.min(Math.max(1, limit ?? 30), 100);
+      const clampedMins = Math.min(Math.max(1, start_minutes_ago ?? 30), 1440);
+      const startTime = Date.now() - clampedMins * 60 * 1000;
+      try {
+        const res = await logsClient.send(new FilterLogEventsCommand({
+          logGroupName: `/aws/lambda/${function_name}`,
+          filterPattern: filter_pattern,
+          startTime,
+          limit: clampedLimit,
+        }));
+        const events = res.events ?? [];
+        return {
+          events: events.map(e => ({
+            timestamp: new Date(e.timestamp).toISOString(),
+            message: e.message?.trim() ?? "",
+            stream: e.logStreamName ?? null,
+          })),
+          count: events.length,
+          searched_streams: res.searchedLogStreams?.length ?? 0,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "LOGS_ERROR" };
       }
     },
   },
