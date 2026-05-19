@@ -829,6 +829,40 @@ test("ace_scan_table_range returns error when expression_values missing", async 
   assert.ok(result.error);
 });
 
+// === DynamoDB Scan (ace_scan_table) ===
+test("ace_scan_table tool exists", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table");
+  assert.ok(t, "ace_scan_table must exist");
+});
+
+test("ace_scan_table returns items from a table", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table");
+  const result = await t.handler({ table_name: TABLE });
+  assert.ok(!result.error, `unexpected error: ${JSON.stringify(result.error)}`);
+  assert.ok("items" in result, "items key must be present");
+  assert.ok("count" in result, "count key must be present");
+  assert.ok("scanned_count" in result, "scanned_count key must be present");
+});
+
+test("ace_scan_table clamps limit to 25", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table");
+  const result = await t.handler({ table_name: TABLE, limit: 999 });
+  assert.ok(!result.error);
+  assert.ok(result.count <= 25);
+});
+
+test("ace_scan_table returns error for missing table_name", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table");
+  const result = await t.handler({});
+  assert.ok(result.error, "missing table_name should return error");
+});
+
+test("ace_scan_table returns error for nonexistent table", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_scan_table");
+  const result = await t.handler({ table_name: "nonexistent-table-xyz" });
+  assert.ok(result.error, "nonexistent table should return error");
+});
+
 test("ace_peek_queue_messages tool exists", async () => {
   const t = probeExtendedTools.find(t => t.name === "ace_peek_queue_messages");
   assert.ok(t, "ace_peek_queue_messages tool must exist");

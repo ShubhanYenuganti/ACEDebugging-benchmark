@@ -14,7 +14,7 @@ import {
   GetShardIteratorCommand,
   GetRecordsCommand,
 } from "@aws-sdk/client-dynamodb-streams";
-import { DynamoDBClient, QueryCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, QueryCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { KMSClient, EncryptCommand, DecryptCommand } from "@aws-sdk/client-kms";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
@@ -646,6 +646,39 @@ export const probeExtendedTools = [
         };
         if (index_name) params.IndexName = index_name;
         const res = await dynamoClient.send(new QueryCommand(params));
+        return {
+          items: (res.Items ?? []).map(item => unmarshall(item)),
+          count: res.Count ?? 0,
+          scanned_count: res.ScannedCount ?? 0,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "DYNAMO_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_scan_table",
+    description: "Full-table DynamoDB Scan with optional filter expression. Use when the partition key is unknown. Returns up to 25 items.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        table_name: { type: "string" },
+        filter_expression: { type: "string" },
+        expression_values: { type: "object" },
+        expression_names: { type: "object" },
+        limit: { type: "number" },
+      },
+      required: ["table_name"],
+    },
+    async handler({ table_name, filter_expression, expression_values, expression_names, limit = 10 } = {}) {
+      if (!table_name) return { error: "table_name is required" };
+      const clampedLimit = Math.min(Math.max(1, limit ?? 10), 25);
+      try {
+        const params = { TableName: table_name, Limit: clampedLimit };
+        if (filter_expression) params.FilterExpression = filter_expression;
+        if (expression_values) params.ExpressionAttributeValues = marshall(expression_values);
+        if (expression_names) params.ExpressionAttributeNames = expression_names;
+        const res = await dynamoClient.send(new ScanCommand(params));
         return {
           items: (res.Items ?? []).map(item => unmarshall(item)),
           count: res.Count ?? 0,
