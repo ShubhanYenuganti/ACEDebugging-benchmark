@@ -765,3 +765,35 @@ test("ace_scan_table_range returns error when expression_values missing", async 
   const result = await t.handler({ table_name: RANGE_TABLE, key_condition: "pk = :pk" });
   assert.ok(result.error);
 });
+
+test("ace_peek_queue_messages tool exists", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_peek_queue_messages");
+  assert.ok(t, "ace_peek_queue_messages tool must exist");
+});
+
+test("ace_peek_queue_messages returns messages array for empty queue", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_peek_queue_messages");
+  const result = await t.handler({ queue_name: QUEUE });
+  assert.ok(!result.error, `unexpected error: ${JSON.stringify(result.error)}`);
+  assert.ok(Array.isArray(result.messages), "messages must be an array");
+  assert.ok(typeof result.count === "number", "count must be a number");
+});
+
+test("ace_peek_queue_messages clamps max_messages to 10", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_peek_queue_messages");
+  const result = await t.handler({ queue_name: QUEUE, max_messages: 999 });
+  assert.ok(!result.error);
+  assert.ok(result.count <= 10);
+});
+
+test("ace_peek_queue_messages returns error for missing queue_name", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_peek_queue_messages");
+  const result = await t.handler({});
+  assert.ok(result.error, "missing queue_name should return error");
+});
+
+test("ace_peek_queue_messages returns error for nonexistent queue", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_peek_queue_messages");
+  const result = await t.handler({ queue_name: "nonexistent-queue-xyz-abc" });
+  assert.ok(result.error, "nonexistent queue should return error");
+});

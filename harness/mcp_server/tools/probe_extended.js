@@ -23,6 +23,7 @@ import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 import { S3ControlClient, ListAccessPointsCommand } from "@aws-sdk/client-s3-control";
 import { CloudWatchClient, PutMetricDataCommand } from "@aws-sdk/client-cloudwatch";
 import { IAMClient, SimulatePrincipalPolicyCommand } from "@aws-sdk/client-iam";
+import { SQSClient, GetQueueUrlCommand, ReceiveMessageCommand } from "@aws-sdk/client-sqs";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -49,6 +50,7 @@ const ssmClient = new SSMClient(awsConfig);
 const s3ControlClient = new S3ControlClient(awsConfig);
 const cwClient = new CloudWatchClient(awsConfig);
 const iamClient = new IAMClient(awsConfig);
+const sqsClient = new SQSClient(awsConfig);
 
 export const probeExtendedTools = [
   {
@@ -643,6 +645,45 @@ export const probeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "DYNAMO_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_peek_queue_messages",
+    description: "Read up to N messages from an SQS queue without consuming them (VisibilityTimeout=0). Returns message bodies parsed as JSON where possible, plus attributes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        queue_name: { type: "string" },
+        max_messages: { type: "number" },
+      },
+      required: ["queue_name"],
+    },
+    async handler({ queue_name, max_messages = 5 } = {}) {
+      if (!queue_name) return { error: "queue_name is required" };
+      const count = Math.min(Math.max(1, max_messages ?? 5), 10);
+      try {
+        const urlRes = await sqsClient.send(new GetQueueUrlCommand({ QueueName: queue_name }));
+        const recvRes = await sqsClient.send(new ReceiveMessageCommand({
+          QueueUrl: urlRes.QueueUrl,
+          MaxNumberOfMessages: count,
+          VisibilityTimeout: 0,
+          WaitTimeSeconds: 0,
+          MessageAttributeNames: ["All"],
+          AttributeNames: ["All"],
+        }));
+        const messages = recvRes.Messages ?? [];
+        return {
+          messages: messages.map(m => ({
+            message_id: m.MessageId,
+            body: (() => { try { return JSON.parse(m.Body); } catch { return m.Body; } })(),
+            attributes: m.MessageAttributes ?? {},
+            approximate_receive_count: m.Attributes?.ApproximateReceiveCount ?? null,
+          })),
+          count: messages.length,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "SQS_ERROR" };
       }
     },
   },
