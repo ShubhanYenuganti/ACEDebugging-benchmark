@@ -390,6 +390,17 @@ test("ace_start_execution: missing args returns error", async () => {
   assert.ok(result.error);
 });
 
+test("ace_start_execution accepts poll_timeout_ms parameter", async () => {
+  const t = probeExtendedTools.find(t => t.name === "ace_start_execution");
+  // No state machine in test setup; just confirm handler doesn't crash on the param
+  const result = await t.handler({
+    state_machine_arn: "arn:aws:states:us-east-1:000000000000:stateMachine:nonexistent",
+    poll_timeout_ms: 1000,
+  });
+  // Should get an error from LocalStack (nonexistent SM), not a crash
+  assert.ok(result.error, "nonexistent state machine should return error");
+});
+
 test("ace_describe_state_machine: nonexistent SM returns error", async () => {
   const result = await observeExtendedTools.find(t => t.name === "ace_describe_state_machine")
     .handler({ state_machine_arn: "arn:aws:states:us-east-1:000000000000:stateMachine:no-such-sm" });

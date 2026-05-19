@@ -119,26 +119,34 @@ export const probeExtendedTools = [
   },
   {
     name: "ace_start_execution",
-    description: "Start a Step Functions state machine execution and poll up to 2 s for its terminal status",
+    description: "Start a Step Functions state machine execution and poll until a terminal status (SUCCEEDED, FAILED, TIMED_OUT, ABORTED) or poll_timeout_ms is reached.",
     inputSchema: {
       type: "object",
       properties: {
         state_machine_arn: { type: "string" },
         input: { type: "object" },
+        poll_timeout_ms: { type: "number" },
       },
       required: ["state_machine_arn"],
     },
-    async handler({ state_machine_arn, input = {} } = {}) {
+    async handler({ state_machine_arn, input = {}, poll_timeout_ms = 5000 } = {}) {
       if (!state_machine_arn) return { error: "state_machine_arn is required" };
+      const timeout = Math.min(Math.max(500, poll_timeout_ms ?? 5000), 15000);
       try {
         const startRes = await sfnClient.send(new StartExecutionCommand({
           stateMachineArn: state_machine_arn,
           input: JSON.stringify(input),
         }));
-        await new Promise(r => setTimeout(r, 2000));
-        const descRes = await sfnClient.send(new DescribeExecutionCommand({
-          executionArn: startRes.executionArn,
-        }));
+        const deadline = Date.now() + timeout;
+        const terminalStatuses = new Set(["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"]);
+        let descRes;
+        do {
+          descRes = await sfnClient.send(new DescribeExecutionCommand({
+            executionArn: startRes.executionArn,
+          }));
+          if (terminalStatuses.has(descRes.status)) break;
+          if (Date.now() < deadline) await new Promise(r => setTimeout(r, 500));
+        } while (Date.now() < deadline);
         return {
           execution_arn: startRes.executionArn,
           status: descRes.status,
