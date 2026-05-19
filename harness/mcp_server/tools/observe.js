@@ -8,7 +8,13 @@ import {
   LambdaClient,
   GetFunctionCommand,
   GetFunctionConfigurationCommand,
+  GetEventSourceMappingCommand,
 } from "@aws-sdk/client-lambda";
+import { DynamoDBClient, DescribeTableCommand } from "@aws-sdk/client-dynamodb";
+import { SQSClient, GetQueueUrlCommand, GetQueueAttributesCommand } from "@aws-sdk/client-sqs";
+import { SNSClient, GetTopicAttributesCommand } from "@aws-sdk/client-sns";
+import { S3Client, GetBucketLocationCommand } from "@aws-sdk/client-s3";
+import { KinesisClient, DescribeStreamSummaryCommand } from "@aws-sdk/client-kinesis";
 import {
   IAMClient,
   GetRoleCommand,
@@ -32,6 +38,11 @@ const cfClient = new CloudFormationClient(awsConfig);
 const lambdaClient = new LambdaClient(awsConfig);
 const iamClient = new IAMClient(awsConfig);
 const logsClient = new CloudWatchLogsClient(awsConfig);
+const dynamoClient = new DynamoDBClient(awsConfig);
+const sqsClient = new SQSClient(awsConfig);
+const snsClient = new SNSClient(awsConfig);
+const s3Client = new S3Client(awsConfig);
+const kinesisClient = new KinesisClient(awsConfig);
 
 export const observeTools = [
   {
@@ -50,16 +61,78 @@ export const observeTools = [
           LogicalResourceId: logical_resource_id,
         }));
         const detail = res.StackResourceDetail;
+        const physId = detail.PhysicalResourceId;
         let properties = {};
-        if (detail.ResourceType === "AWS::Lambda::Function") {
-          try {
-            const fn = await lambdaClient.send(new GetFunctionCommand({ FunctionName: detail.PhysicalResourceId }));
-            properties = fn.Configuration ?? {};
-          } catch {}
-        }
+        try {
+          switch (detail.ResourceType) {
+            case "AWS::Lambda::Function": {
+              const fn = await lambdaClient.send(new GetFunctionCommand({ FunctionName: physId }));
+              properties = fn.Configuration ?? {};
+              break;
+            }
+            case "AWS::DynamoDB::Table": {
+              const tbl = await dynamoClient.send(new DescribeTableCommand({ TableName: physId }));
+              properties = tbl.Table ?? {};
+              break;
+            }
+            case "AWS::SQS::Queue": {
+              const urlRes = await sqsClient.send(new GetQueueUrlCommand({ QueueName: physId }));
+              const attrRes = await sqsClient.send(new GetQueueAttributesCommand({
+                QueueUrl: urlRes.QueueUrl,
+                AttributeNames: ["All"],
+              }));
+              properties = attrRes.Attributes ?? {};
+              break;
+            }
+            case "AWS::SNS::Topic": {
+              const topic = await snsClient.send(new GetTopicAttributesCommand({ TopicArn: physId }));
+              properties = topic.Attributes ?? {};
+              break;
+            }
+            case "AWS::S3::Bucket": {
+              const loc = await s3Client.send(new GetBucketLocationCommand({ Bucket: physId }));
+              properties = { LocationConstraint: loc.LocationConstraint ?? "us-east-1" };
+              break;
+            }
+            case "AWS::IAM::Role": {
+              const roleRes = await iamClient.send(new GetRoleCommand({ RoleName: physId }));
+              const inlineRes = await iamClient.send(new ListRolePoliciesCommand({ RoleName: physId }));
+              const attachedRes = await iamClient.send(new ListAttachedRolePoliciesCommand({ RoleName: physId }));
+              const inlinePolicies = [];
+              for (const policyName of (inlineRes.PolicyNames ?? [])) {
+                const pol = await iamClient.send(new GetRolePolicyCommand({ RoleName: physId, PolicyName: policyName }));
+                inlinePolicies.push({ name: policyName, document: JSON.parse(decodeURIComponent(pol.PolicyDocument)) });
+              }
+              properties = {
+                assume_role_policy: JSON.parse(decodeURIComponent(roleRes.Role.AssumeRolePolicyDocument)),
+                attached_policies: (attachedRes.AttachedPolicies ?? []).map(p => ({ name: p.PolicyName, arn: p.PolicyArn })),
+                inline_policies: inlinePolicies,
+              };
+              break;
+            }
+            case "AWS::Lambda::EventSourceMapping": {
+              const esm = await lambdaClient.send(new GetEventSourceMappingCommand({ UUID: physId }));
+              properties = {
+                event_source_arn: esm.EventSourceArn,
+                function_arn: esm.FunctionArn,
+                state: esm.State,
+                batch_size: esm.BatchSize,
+                filter_criteria: esm.FilterCriteria ?? null,
+              };
+              break;
+            }
+            case "AWS::Kinesis::Stream": {
+              const stream = await kinesisClient.send(new DescribeStreamSummaryCommand({ StreamName: physId }));
+              properties = stream.StreamDescriptionSummary ?? {};
+              break;
+            }
+            default:
+              properties = { note: "use type-specific tool for this resource type" };
+          }
+        } catch {}
         return {
           resource_type: detail.ResourceType,
-          physical_id: detail.PhysicalResourceId,
+          physical_id: physId,
           properties,
           status: detail.ResourceStatus,
         };

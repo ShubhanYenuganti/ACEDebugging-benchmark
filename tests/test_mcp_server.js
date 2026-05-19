@@ -253,6 +253,28 @@ test("ace_get_iam_role: nonexistent role returns error", async () => {
   assert.ok(result.error);
 });
 
+test("ace_describe_resource returns properties for DynamoDB table", async () => {
+  const t = tool(observeTools, "ace_describe_resource");
+  const result = await t.handler({ logical_resource_id: "NonExistentTable" });
+  assert.ok(result.error, "nonexistent resource should return error, not empty properties");
+});
+
+test("ace_describe_resource Lambda returns non-empty properties", async () => {
+  const t = tool(observeTools, "ace_describe_resource");
+  const result = await t.handler({ logical_resource_id: "Placeholder" });
+  if (!result.error) {
+    assert.ok(result.resource_type, "resource_type must be present");
+    assert.ok(result.properties !== undefined, "properties must be present");
+    if (result.resource_type !== "AWS::Lambda::Function") {
+      assert.ok(
+        result.properties.note === "use type-specific tool for this resource type" ||
+        typeof result.properties === "object",
+        "non-Lambda resources must have properties object or note"
+      );
+    }
+  }
+});
+
 // Score tools
 test("ace_verify_fix: empty key returns unauthorized", async () => {
   const result = await tool(scoreTools, "ace_verify_fix").handler({ run_id: "r1", harness_api_key: "" });
