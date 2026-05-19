@@ -21,6 +21,8 @@ import {
   ListRolePoliciesCommand,
   ListAttachedRolePoliciesCommand,
   GetRolePolicyCommand,
+  GetPolicyCommand,
+  GetPolicyVersionCommand,
 } from "@aws-sdk/client-iam";
 import {
   CloudWatchLogsClient,
@@ -188,12 +190,26 @@ export const observeTools = [
             document: JSON.parse(decodeURIComponent(pol.PolicyDocument)),
           });
         }
+        const attachedPolicies = [];
+        for (const p of (attachedRes.AttachedPolicies ?? []).slice(0, 5)) {
+          try {
+            const policyRes = await iamClient.send(new GetPolicyCommand({ PolicyArn: p.PolicyArn }));
+            const versionRes = await iamClient.send(new GetPolicyVersionCommand({
+              PolicyArn: p.PolicyArn,
+              VersionId: policyRes.Policy.DefaultVersionId,
+            }));
+            attachedPolicies.push({
+              name: p.PolicyName,
+              arn: p.PolicyArn,
+              document: JSON.parse(decodeURIComponent(versionRes.PolicyVersion.Document)),
+            });
+          } catch {
+            attachedPolicies.push({ name: p.PolicyName, arn: p.PolicyArn, document: null });
+          }
+        }
         return {
           assume_role_policy: JSON.parse(decodeURIComponent(roleRes.Role.AssumeRolePolicyDocument)),
-          attached_policies: (attachedRes.AttachedPolicies ?? []).map(p => ({
-            name: p.PolicyName,
-            arn: p.PolicyArn,
-          })),
+          attached_policies: attachedPolicies,
           inline_policies: inlinePolicies,
         };
       } catch (err) {

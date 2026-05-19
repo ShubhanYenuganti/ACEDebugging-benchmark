@@ -253,6 +253,27 @@ test("ace_get_iam_role: nonexistent role returns error", async () => {
   assert.ok(result.error);
 });
 
+test("ace_get_iam_role attached_policies has document field", async () => {
+  const t = tool(observeTools, "ace_get_iam_role");
+  const iamTestCl = new (await import("@aws-sdk/client-iam")).IAMClient({
+    endpoint: "http://localhost:4566",
+    region: "us-east-1",
+    credentials: { accessKeyId: "test", secretAccessKey: "test" },
+  });
+  try {
+    await iamTestCl.send(new (await import("@aws-sdk/client-iam")).CreateRoleCommand({
+      RoleName: "test-role-for-attach",
+      AssumeRolePolicyDocument: JSON.stringify({ Version: "2012-10-17", Statement: [] }),
+    }));
+  } catch {}
+  const result = await t.handler({ role_name: "test-role-for-attach" });
+  assert.ok(!result.error, `unexpected error: ${JSON.stringify(result.error)}`);
+  assert.ok("attached_policies" in result, "attached_policies key must be present");
+  for (const p of result.attached_policies) {
+    assert.ok("document" in p, `attached policy ${p.name} must have document field`);
+  }
+});
+
 test("ace_describe_resource returns properties for DynamoDB table", async () => {
   const t = tool(observeTools, "ace_describe_resource");
   const result = await t.handler({ logical_resource_id: "NonExistentTable" });
