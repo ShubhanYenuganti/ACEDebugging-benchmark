@@ -983,3 +983,33 @@ test("ace_get_stack_events clamps limit to 50", async () => {
   assert.ok(!result.error);
   assert.ok(result.length <= 50);
 });
+
+// === CloudWatch Lambda Metrics ===
+test("ace_get_lambda_metrics tool exists", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_lambda_metrics");
+  assert.ok(t, "ace_get_lambda_metrics must exist");
+});
+
+test("ace_get_lambda_metrics returns metric fields for known Lambda", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_lambda_metrics");
+  const result = await t.handler({ function_name: FN });
+  assert.ok(!result.error, `unexpected error: ${JSON.stringify(result.error)}`);
+  assert.ok("invocations" in result, "invocations field required");
+  assert.ok("errors" in result, "errors field required");
+  assert.ok("throttles" in result, "throttles field required");
+  assert.ok("duration" in result, "duration field required");
+  assert.ok("window_minutes" in result, "window_minutes field required");
+});
+
+test("ace_get_lambda_metrics returns error for missing function_name", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_lambda_metrics");
+  const result = await t.handler({});
+  assert.ok(result.error, "missing function_name should return error");
+});
+
+test("ace_get_lambda_metrics clamps window_minutes to 60", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_lambda_metrics");
+  const result = await t.handler({ function_name: FN, window_minutes: 999 });
+  assert.ok(!result.error);
+  assert.strictEqual(result.window_minutes, 60);
+});

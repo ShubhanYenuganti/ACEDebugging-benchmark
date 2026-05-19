@@ -691,4 +691,56 @@ export const observeExtendedTools = [
       }
     },
   },
+  {
+    name: "ace_get_lambda_metrics",
+    description: "Get Lambda invocation, error, throttle, DeadLetterErrors counts and duration (p50/max) over a time window. Collapses 5 GetMetricStatistics calls into one.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        function_name: { type: "string" },
+        window_minutes: { type: "number" },
+      },
+      required: ["function_name"],
+    },
+    async handler({ function_name, window_minutes = 15 } = {}) {
+      if (!function_name) return { error: "function_name is required" };
+      const clampedWindow = Math.min(Math.max(1, window_minutes ?? 15), 60);
+      const endTime = new Date();
+      const startTime = new Date(endTime.getTime() - clampedWindow * 60 * 1000);
+      const dimensions = [{ Name: "FunctionName", Value: function_name }];
+      const period = clampedWindow * 60;
+      const sumMetrics = ["Invocations", "Errors", "Throttles", "DeadLetterErrors"];
+      try {
+        const results = {};
+        for (const metricName of sumMetrics) {
+          const res = await cwClient.send(new GetMetricStatisticsCommand({
+            Namespace: "AWS/Lambda",
+            MetricName: metricName,
+            Dimensions: dimensions,
+            StartTime: startTime,
+            EndTime: endTime,
+            Period: period,
+            Statistics: ["Sum"],
+          }));
+          results[metricName.toLowerCase().replace("deadlettererrors", "dead_letter_errors")] =
+            res.Datapoints?.[0]?.Sum ?? 0;
+        }
+        const durationRes = await cwClient.send(new GetMetricStatisticsCommand({
+          Namespace: "AWS/Lambda",
+          MetricName: "Duration",
+          Dimensions: dimensions,
+          StartTime: startTime,
+          EndTime: endTime,
+          Period: period,
+          Statistics: ["Average", "Maximum"],
+        }));
+        const dp = durationRes.Datapoints?.[0];
+        results.duration = { avg_ms: dp?.Average ?? 0, max_ms: dp?.Maximum ?? 0 };
+        results.window_minutes = clampedWindow;
+        return results;
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "CLOUDWATCH_ERROR" };
+      }
+    },
+  },
 ];
