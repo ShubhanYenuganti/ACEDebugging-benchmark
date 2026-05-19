@@ -248,6 +248,23 @@ test("ace_get_log_tail: returns array or error", async () => {
   assert.ok(Array.isArray(result) || typeof result.error === "string");
 });
 
+test("ace_get_log_tail accepts stream_count parameter", async () => {
+  const t = tool(observeTools, "ace_get_log_tail");
+  const result = await t.handler({ function_name: FN, line_count: 5, stream_count: 3 });
+  assert.ok(!result.error, `unexpected error: ${JSON.stringify(result.error)}`);
+  assert.ok(Array.isArray(result), "result must be an array");
+});
+
+test("ace_get_log_tail returned events have timestamp and message fields", async () => {
+  const t = tool(observeTools, "ace_get_log_tail");
+  const result = await t.handler({ function_name: FN, line_count: 5, stream_count: 1 });
+  assert.ok(Array.isArray(result));
+  for (const e of result) {
+    assert.ok("timestamp" in e, "each event must have timestamp");
+    assert.ok("message" in e, "each event must have message");
+  }
+});
+
 test("ace_get_iam_role: nonexistent role returns error", async () => {
   const result = await tool(observeTools, "ace_get_iam_role").handler({ role_name: "nonexistent-xyz" });
   assert.ok(result.error);

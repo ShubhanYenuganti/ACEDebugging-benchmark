@@ -219,44 +219,51 @@ export const observeTools = [
   },
   {
     name: "ace_get_log_tail",
-    description: "Get recent CloudWatch log lines for a Lambda function",
+    description: "Get recent CloudWatch log lines for a Lambda function, merged across multiple log streams",
     inputSchema: {
       type: "object",
       properties: {
         function_name: { type: "string" },
         line_count: { type: "number" },
+        stream_count: { type: "number" },
       },
       required: ["function_name"],
     },
-    async handler({ function_name, line_count = 20 }) {
+    async handler({ function_name, line_count = 20, stream_count = 3 }) {
       if (!function_name) return { error: "function_name is required" };
+      const clampedStreams = Math.min(Math.max(1, stream_count ?? 3), 10);
       try {
         const groupName = `/aws/lambda/${function_name}`;
         const streamsRes = await logsClient.send(new DescribeLogStreamsCommand({
           logGroupName: groupName,
           orderBy: "LastEventTime",
           descending: true,
-          limit: 1,
+          limit: clampedStreams,
         }));
-        const stream = streamsRes.logStreams?.[0];
-        if (!stream) return [];
-        const eventsRes = await logsClient.send(new GetLogEventsCommand({
-          logGroupName: groupName,
-          logStreamName: stream.logStreamName,
-          limit: line_count,
-          startFromHead: false,
-        }));
-        return (eventsRes.events ?? []).reverse().map(e => {
-          const msg = e.message ?? "";
-          const requestIdMatch = msg.match(/RequestId:\s*([^\s]+)/);
-          const levelMatch = msg.match(/\b(ERROR|WARN|INFO|DEBUG)\b/);
-          return {
-            timestamp: new Date(e.timestamp).toISOString(),
-            request_id: requestIdMatch?.[1] ?? null,
-            level: levelMatch?.[1] ?? "INFO",
-            message: msg.trim(),
-          };
-        });
+        const streams = streamsRes.logStreams ?? [];
+        if (streams.length === 0) return [];
+        const allEvents = [];
+        for (const stream of streams) {
+          const eventsRes = await logsClient.send(new GetLogEventsCommand({
+            logGroupName: groupName,
+            logStreamName: stream.logStreamName,
+            limit: line_count,
+            startFromHead: false,
+          }));
+          for (const e of (eventsRes.events ?? [])) {
+            const msg = e.message ?? "";
+            const requestIdMatch = msg.match(/RequestId:\s*([^\s]+)/);
+            const levelMatch = msg.match(/\b(ERROR|WARN|INFO|DEBUG)\b/);
+            allEvents.push({
+              timestamp: new Date(e.timestamp).toISOString(),
+              request_id: requestIdMatch?.[1] ?? null,
+              level: levelMatch?.[1] ?? "INFO",
+              message: msg.trim(),
+            });
+          }
+        }
+        allEvents.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        return allEvents.slice(-line_count);
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "LOGS_ERROR" };
       }
