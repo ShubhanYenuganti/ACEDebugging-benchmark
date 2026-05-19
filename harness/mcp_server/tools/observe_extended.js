@@ -17,6 +17,7 @@ import { KMSClient, DescribeKeyCommand, GetKeyRotationStatusCommand } from "@aws
 import { SecretsManagerClient, DescribeSecretCommand } from "@aws-sdk/client-secrets-manager";
 import { SSMClient, DescribeParametersCommand } from "@aws-sdk/client-ssm";
 import { S3ControlClient, GetPublicAccessBlockCommand } from "@aws-sdk/client-s3-control";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { CloudWatchClient, GetMetricStatisticsCommand } from "@aws-sdk/client-cloudwatch";
 
 const awsConfig = {
@@ -41,6 +42,7 @@ const kmsClient = new KMSClient(awsConfig);
 const secretsClient = new SecretsManagerClient(awsConfig);
 const ssmClient = new SSMClient(awsConfig);
 const s3ControlClient = new S3ControlClient(awsConfig);
+const s3Client = new S3Client(awsConfig);
 const cwClient = new CloudWatchClient(awsConfig);
 
 export const observeExtendedTools = [
@@ -562,6 +564,53 @@ export const observeExtendedTools = [
         };
       } catch (err) {
         return { error: err.message, error_type: err.name ?? "CW_ERROR" };
+      }
+    },
+  },
+  {
+    name: "ace_get_s3_object_content",
+    description: "Read contents of an S3 object as UTF-8 text. Capped at 256 KB; binary objects return an error. Use ace_check_s3_object for metadata only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bucket: { type: "string" },
+        key: { type: "string" },
+        max_bytes: { type: "number" },
+      },
+      required: ["bucket", "key"],
+    },
+    async handler({ bucket, key, max_bytes = 65536 } = {}) {
+      if (!bucket) return { error: "bucket is required" };
+      if (!key) return { error: "key is required" };
+      const cap = Math.min(Math.max(1, max_bytes ?? 65536), 262144);
+      try {
+        const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+        const contentType = res.ContentType ?? "";
+        if (contentType.startsWith("image/") || contentType === "application/octet-stream") {
+          return { error: "binary content not supported", content_type: contentType };
+        }
+        const chunks = [];
+        let total = 0;
+        let truncated = false;
+        for await (const chunk of res.Body) {
+          const remaining = cap - total;
+          if (chunk.length > remaining) {
+            chunks.push(chunk.slice(0, remaining));
+            truncated = true;
+            break;
+          }
+          chunks.push(chunk);
+          total += chunk.length;
+        }
+        return {
+          content: Buffer.concat(chunks).toString("utf-8"),
+          size: res.ContentLength ?? total,
+          truncated,
+          content_type: contentType,
+          last_modified: res.LastModified?.toISOString() ?? null,
+        };
+      } catch (err) {
+        return { error: err.message, error_type: err.name ?? "S3_ERROR" };
       }
     },
   },

@@ -797,3 +797,26 @@ test("ace_peek_queue_messages returns error for nonexistent queue", async () => 
   const result = await t.handler({ queue_name: "nonexistent-queue-xyz-abc" });
   assert.ok(result.error, "nonexistent queue should return error");
 });
+
+test("ace_get_s3_object_content tool exists", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_s3_object_content");
+  assert.ok(t, "ace_get_s3_object_content must exist");
+});
+
+test("ace_get_s3_object_content returns error for missing bucket", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_s3_object_content");
+  const result = await t.handler({});
+  assert.ok(result.error, "missing bucket should return error");
+});
+
+test("ace_get_s3_object_content returns error for missing key", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_s3_object_content");
+  const result = await t.handler({ bucket: "some-bucket" });
+  assert.ok(result.error, "missing key should return error");
+});
+
+test("ace_get_s3_object_content returns error for nonexistent object", async () => {
+  const t = observeExtendedTools.find(t => t.name === "ace_get_s3_object_content");
+  const result = await t.handler({ bucket: "nonexistent-bucket-xyz", key: "file.json" });
+  assert.ok(result.error, "nonexistent object should return error");
+});
