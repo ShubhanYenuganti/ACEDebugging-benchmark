@@ -110,7 +110,7 @@ class ScenarioRunner:
             ],
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=600,
         )
         if result.returncode != 0:
             raise RuntimeError(
@@ -127,13 +127,16 @@ class ScenarioRunner:
         )
         os.makedirs(os.path.dirname(results_path), exist_ok=True)
         env = {**os.environ, "ACE_BENCH_RESULTS_PATH": os.path.abspath(results_path)}
-        proc = subprocess.run(
-            [sys.executable, str(functional_test)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=env,
-        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(functional_test)],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            return AssertionRunResult(crash_reason="timeout")
         return assertion_parser.parse_with_fallback(
             proc.stdout + "\n" + proc.stderr,
             returncode=proc.returncode,

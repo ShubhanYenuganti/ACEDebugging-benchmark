@@ -154,6 +154,8 @@ def _format_test_summary(result: AssertionRunResult, attempt: int, max_retries: 
     n_passed = len(result.passed)
     n_failed = len(result.failed)
     lines = [f"Tests: {n_passed} passed, {n_failed} failed."]
+    if result.crash_reason:
+        lines.append(f"(test runner error: {result.crash_reason})")
     for a in result.passed:
         lines.append(f"[{a.name}]: PASS")
     for a in result.failed:
@@ -382,6 +384,18 @@ async def run_agent_loop(
                                             content = _skipped_msg + (
                                                 f"Maximum test retries ({max_test_retries}) reached. "
                                                 + _format_test_summary(verify_result, test_retry_count, max_test_retries)
+                                            )
+                                        elif verify_result.crash_reason == "timeout":
+                                            submitted = False
+                                            test_retry_count += 1
+                                            # Don't reset writes_since_last_submit — the fix
+                                            # may be correct; the test just ran out of time.
+                                            content = _skipped_msg + (
+                                                f"Tests timed out after 600s "
+                                                f"(attempt {test_retry_count} of {max_test_retries}). "
+                                                "The infrastructure may need more time to settle. "
+                                                "Call submit_fix again to retry, or revise your fix "
+                                                "with write_file if you believe a code change is needed."
                                             )
                                         else:
                                             submitted = False

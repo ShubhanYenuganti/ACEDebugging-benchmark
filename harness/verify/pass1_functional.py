@@ -46,7 +46,7 @@ def run_pass1(corpus_dir: str) -> AssertionRunResult:
             [sys.executable, functional_test],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=600,
             env=env,
         )
         return assertion_parser.parse_with_fallback(
