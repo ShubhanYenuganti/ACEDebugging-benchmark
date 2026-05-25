@@ -73,7 +73,7 @@ Resources:
                 Resource: !GetAtt InventoryUpdatesQueue.Arn
               - Effect: Allow
                 Action: dynamodb:PutItem
-                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AWS::StackName}-inventory-archive'
+                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AWS::StackName}-inventory-updates'
 
   CSVProcessingToSQSFunction:
     Type: AWS::Lambda::Function

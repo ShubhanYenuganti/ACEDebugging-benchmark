@@ -288,7 +288,6 @@ Resources:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
       BatchSize: 5
-      StartingPosition: LATEST
       EventSourceArn: !GetAtt FriendTable.StreamArn
       FunctionName: !Ref UnfriendStateHandlerFunction
       FunctionResponseTypes:
@@ -378,7 +377,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref ReadHandlerFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ReadApi}/prod/GET/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ReadApi}/v1/GET/*'
 
   ReadApiDeployment:
     Type: AWS::ApiGateway::Deployment
@@ -407,7 +406,7 @@ Outputs:
   ApiId:
     Value: !Ref ReadApi
   ApiUrl:
-    Value: !Sub 'http://${ReadApi}.execute-api.localhost.localstack.cloud:4566/prod'
+    Value: !Sub 'http://${ReadApi}.execute-api.localhost.localstack.cloud:4566/v1'
   FrontHandlerFunctionName:
     Value: !Ref FrontHandlerFunction
   RequestStateHandlerFunctionName:

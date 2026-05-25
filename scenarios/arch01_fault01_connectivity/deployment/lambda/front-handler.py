@@ -23,7 +23,7 @@ def _request(player_id, friend_id, timestamp):
                 "state": "Requested",
                 "last_updated": timestamp,
             },
-            ConditionExpression="attribute_not_exists(player_id)",
+            ConditionExpression="attribute_not_exists(player_id) AND attribute_not_exists(friend_id)",
         )
     except ClientError as exc:
         if _conditional_name(exc) != "ConditionalCheckFailedException":
@@ -34,18 +34,21 @@ def _accept(player_id, friend_id, timestamp):
     try:
         table.update_item(
             Key={"player_id": player_id, "friend_id": friend_id},
-            ConditionExpression="#state = :pending",
+            ConditionExpression="#state = :requested",
             UpdateExpression="SET #state = :friends, #last_updated = :timestamp",
             ExpressionAttributeNames={
                 "#state": "state",
                 "#last_updated": "last_updated",
             },
             ExpressionAttributeValues={
-                ":pending": "Pending",
+                ":requested": "Requested",
                 ":friends": "Friends",
                 ":timestamp": timestamp,
             },
         )
+        # Remove the call to accept the reverse friend relationship here
+        # The accept reversal should be handled by the AcceptStateHandlerFunction
+
     except ClientError as exc:
         if _conditional_name(exc) != "ConditionalCheckFailedException":
             raise

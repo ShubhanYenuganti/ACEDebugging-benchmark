@@ -16,6 +16,7 @@ def _request(player_id, friend_id, timestamp):
     if player_id == friend_id:
         return
     try:
+        # Fix: correct guard condition to use both player_id and friend_id for composite key
         table.put_item(
             Item={
                 "player_id": player_id,
@@ -23,7 +24,7 @@ def _request(player_id, friend_id, timestamp):
                 "state": "Requested",
                 "last_updated": timestamp,
             },
-            ConditionExpression="attribute_not_exists(player_id)",
+            ConditionExpression="attribute_not_exists(player_id) AND attribute_not_exists(friend_id)",
         )
     except ClientError as exc:
         if _conditional_name(exc) != "ConditionalCheckFailedException":

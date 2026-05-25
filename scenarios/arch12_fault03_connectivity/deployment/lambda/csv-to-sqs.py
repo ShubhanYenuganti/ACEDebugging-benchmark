@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import uuid
 
 import boto3
 
@@ -17,7 +18,8 @@ def lambda_handler(event, context):
         csv_content = response["Body"].read().decode("utf-8-sig")
         batch = []
         for row in csv.DictReader(csv_content.splitlines()):
-            batch.append({"Id": str(len(batch) + 1), "MessageBody": json.dumps(row)})
+            # Use a unique ID per message to avoid duplicates and conflicts
+            batch.append({"Id": str(uuid.uuid4()), "MessageBody": json.dumps(row)})
             if len(batch) == 10:
                 sqs.send_message_batch(QueueUrl=os.environ["SQS_QUEUE_URL"], Entries=batch)
                 sent += len(batch)

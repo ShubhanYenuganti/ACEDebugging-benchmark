@@ -417,9 +417,20 @@ async def run_agent_loop(
                                 else:
                                     retry_count += 1
                                     writes_since_last_submit = 0
+                                    if deploy_result.outcome == "lint_fail" and deploy_result.lint_errors:
+                                        lint_detail = "\n".join(
+                                            f"  - [{e.get('rule', '?')}] {e.get('message', '')} "
+                                            f"({e.get('location', 'unknown location')})"
+                                            for e in deploy_result.lint_errors
+                                        )
+                                        failure_detail = (
+                                            f"lint_fail in faulted.yaml:\n{lint_detail}"
+                                        )
+                                    else:
+                                        failure_detail = deploy_result.error or deploy_result.outcome
                                     content = (
                                         f"Deployment failed (attempt {retry_count}/{max_deploy_retries}): "
-                                        f"{deploy_result.error or deploy_result.outcome}. "
+                                        f"{failure_detail}. "
                                         "Read the error carefully, revise your fix with write_file, "
                                         "then call submit_fix again."
                                     )
@@ -433,29 +444,30 @@ async def run_agent_loop(
                                     except Exception:
                                         _old_content = ""
                             content = dispatch_file_tool(name, args, scenario_dir)
+                            if name == "read_file":
+                                print(f"  [read_file → {args.get('path', '?')}]", flush=True)
                             if name == "write_file" and content.startswith("Written "):
                                 writes_made += 1
                                 writes_since_last_submit += 1
-                                if verbose:
-                                    new_content = args.get("content", "")
-                                    file_path = args.get("path", "?")
-                                    before_lines = _old_content.splitlines() if _old_content else []
-                                    after_lines = new_content.splitlines()
-                                    diff_lines = list(difflib.unified_diff(
-                                        before_lines, after_lines,
-                                        fromfile=f"a/{file_path}", tofile=f"b/{file_path}",
-                                        lineterm="",
-                                    ))
-                                    changed = [
-                                        l for l in diff_lines
-                                        if (l.startswith("+") or l.startswith("-"))
-                                        and not l.startswith(("+++", "---"))
-                                    ]
-                                    print(f"  [edit → {file_path}]", flush=True)
-                                    for dl in changed[:30]:
-                                        print(f"    {dl}", flush=True)
-                                    if len(changed) > 30:
-                                        print(f"    ... ({len(changed) - 30} more changes)", flush=True)
+                                new_content = args.get("content", "")
+                                file_path = args.get("path", "?")
+                                before_lines = _old_content.splitlines() if _old_content else []
+                                after_lines = new_content.splitlines()
+                                diff_lines = list(difflib.unified_diff(
+                                    before_lines, after_lines,
+                                    fromfile=f"a/{file_path}", tofile=f"b/{file_path}",
+                                    lineterm="",
+                                ))
+                                changed = [
+                                    l for l in diff_lines
+                                    if (l.startswith("+") or l.startswith("-"))
+                                    and not l.startswith(("+++", "---"))
+                                ]
+                                print(f"  [write_file → {file_path}]", flush=True)
+                                for dl in changed[:10]:
+                                    print(f"    {dl}", flush=True)
+                                if len(changed) > 10:
+                                    print(f"    ... ({len(changed) - 10} more changes)", flush=True)
                 else:
                     try:
                         mcp_result = await session.call_tool(name, args)

@@ -11,6 +11,11 @@ Resources:
         LambdaConfigurations:
           - Event: s3:ObjectCreated:Put
             Function: !GetAtt CSVProcessingToSQSFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .csv
 
   InventoryUpdatesDlq:
     Type: AWS::SQS::Queue

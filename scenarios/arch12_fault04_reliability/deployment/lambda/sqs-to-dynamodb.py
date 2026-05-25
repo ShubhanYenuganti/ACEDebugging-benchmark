@@ -4,20 +4,24 @@ import uuid
 
 import boto3
 
-dynamodb = boto3.client("dynamodb")
-
+dynamodb = boto3.resource("dynamodb")
 
 def lambda_handler(event, context):
+    table_name = os.environ["DYNAMODB_TABLE_NAME"]
+    table = dynamodb.Table(table_name)
     for message in event.get("Records", []):
         body = json.loads(message["body"])
-        dynamodb.put_item(
-            TableName=os.environ["DYNAMODB_TABLE_NAME"],
-            Item={
-                "id": {"S": str(uuid.uuid4())},
-                "product_id": {"S": body["product_id"]},
-                "location": {"S": body["location"]},
-                "quantity": {"N": str(body["quantity"])},
-                "update_date": {"S": body["update_date"]},
-            },
-        )
+        try:
+            # Use 'id' as the partition key and ensure all keys exist in the item
+            item = {
+                "id": str(uuid.uuid4()),
+                "product_id": body.get("product_id", ""),
+                "location": body.get("location", ""),
+                "quantity": int(body.get("quantity", 0)),
+                "update_date": body.get("update_date", ""),
+            }
+            table.put_item(Item=item)
+        except Exception as e:
+            print(f"Error writing to DynamoDB: {e}")
+            raise
     return {}

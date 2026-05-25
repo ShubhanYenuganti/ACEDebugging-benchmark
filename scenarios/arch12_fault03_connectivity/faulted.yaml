@@ -119,9 +119,6 @@ Resources:
       BatchSize: 1
       EventSourceArn: !GetAtt InventoryUpdatesQueue.Arn
       FunctionName: !Ref SQSToDynamoDBFunction
-      FilterCriteria:
-        Filters:
-          - Pattern: '{"body":{"warehouse":["A"]}}'
 
 Outputs:
   InventoryUpdatesBucketName:

@@ -13,6 +13,8 @@ def lambda_handler(event, context):
     for record in event.get("Records", []):
         bucket = record["s3"]["bucket"]["name"]
         key = record["s3"]["object"]["key"]
+        # Remove any leading or trailing whitespace from the key
+        key = key.strip()
         response = s3.get_object(Bucket=bucket, Key=key)
         csv_content = response["Body"].read().decode("utf-8-sig")
         batch = []

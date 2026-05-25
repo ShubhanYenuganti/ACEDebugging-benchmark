@@ -10,7 +10,7 @@ Resources:
       NotificationConfiguration:
         LambdaConfigurations:
           - Event: s3:ObjectCreated:*
-            Function: !GetAtt CSVProcessingToSQSFunction.Arn
+            LambdaFunctionArn: !GetAtt CSVProcessingToSQSFunction.Arn
 
   InventoryUpdatesDlq:
     Type: AWS::SQS::Queue
@@ -80,12 +80,12 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-csv-to-sqs'
       Runtime: python3.11
-      Handler: index.lambda_handler
+      Handler: csv-to-sqs.lambda_handler
       Role: !GetAtt InventoryFunctionRole.Arn
       Timeout: 60
       Environment:
         Variables:
-          SQS_QUEUE_URL: !Sub 'https://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/${AWS::StackName}-inventory-queue-v2'
+          SQS_QUEUE_URL: !Sub 'https://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/${AWS::StackName}-inventory-queue'
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: csv-to-sqs.zip
@@ -95,7 +95,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-sqs-to-dynamodb'
       Runtime: python3.11
-      Handler: index.lambda_handler
+      Handler: sqs-to-dynamodb.lambda_handler
       Role: !GetAtt InventoryFunctionRole.Arn
       Timeout: 60
       Environment:

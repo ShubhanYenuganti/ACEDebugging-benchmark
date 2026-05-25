@@ -17,9 +17,6 @@ Resources:
     Properties:
       QueueName: !Sub '${AWS::StackName}-inventory-dlq'
       VisibilityTimeout: 300
-      RedrivePolicy:
-        deadLetterTargetArn: !GetAtt InventoryUpdatesQueue.Arn
-        maxReceiveCount: 1
 
   InventoryUpdatesQueue:
     Type: AWS::SQS::Queue
@@ -103,7 +100,7 @@ Resources:
       Timeout: 60
       Environment:
         Variables:
-          DYNAMODB_TABLE_NAME: !Sub '${AWS::StackName}-inventory-staging'
+          DYNAMODB_TABLE_NAME: !Ref InventoryUpdatesTable
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: sqs-to-dynamodb.zip

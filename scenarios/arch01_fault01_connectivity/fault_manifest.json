@@ -3,6 +3,7 @@
   "fault_class": "connectivity",
   "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
   "scenario_id": "arch01_fault01_connectivity",
+  "baseline_idempotent": false,
   "target_resource": "FriendTable",
   "target_property": "Properties.StreamSpecification.StreamViewType",
   "injected_value": "NEW_IMAGE",
@@ -11,21 +12,21 @@
     "Restore FriendTable.StreamSpecification.StreamViewType to NEW_AND_OLD_IMAGES so stream records include OldImage on MODIFY events, satisfying the AcceptStateMapping filter pattern that requires OldImage.state = Pending"
   ],
   "invalid_patches": [
-    "Remove the OldImage clause from AcceptStateMapping filter pattern — this unblocks the accept handler but allows it to fire on any Friends MODIFY, not just Pending→Friends transitions",
-    "Change AcceptStateMapping filter to match on NewImage only — partially fixes by unblocking invocation but breaks idempotency"
+    "Remove the OldImage clause from AcceptStateMapping filter pattern \u2014 this unblocks the accept handler but allows it to fire on any Friends MODIFY, not just Pending\u2192Friends transitions",
+    "Change AcceptStateMapping filter to match on NewImage only \u2014 partially fixes by unblocking invocation but breaks idempotency"
   ],
   "optimal_tool_calls": 3,
   "optimal_files_changed": 1,
   "optimal_lines_changed": 1,
   "optimal_diagnostic_path": [
-    "ace_describe_dynamo_stream(table=FriendTable) → reveals StreamViewType is NEW_IMAGE, not NEW_AND_OLD_IMAGES",
-    "ace_describe_resource(resource=AcceptStateMapping) → shows filter pattern requires OldImage.state=Pending, which is absent from NEW_IMAGE records",
-    "ace_get_log_tail(function=AcceptStateHandlerFunction) → confirms function is never invoked after an Accept action is sent"
+    "ace_describe_dynamo_stream(table=FriendTable) \u2192 reveals StreamViewType is NEW_IMAGE, not NEW_AND_OLD_IMAGES",
+    "ace_describe_resource(resource=AcceptStateMapping) \u2192 shows filter pattern requires OldImage.state=Pending, which is absent from NEW_IMAGE records",
+    "ace_get_log_tail(function=AcceptStateHandlerFunction) \u2192 confirms function is never invoked after an Accept action is sent"
   ],
   "concurrency_probe_n": null,
   "deployment_check": "CREATE_COMPLETE",
   "observability_check": "accept_terminal_state",
-  "observable_symptom": "After a Request → Accept cycle, the requester-side record stays in Requested state. The receiver-side record transitions to Friends correctly but the requester-side record is never updated. accept_terminal_state assertion fails.",
+  "observable_symptom": "After a Request \u2192 Accept cycle, the requester-side record stays in Requested state. The receiver-side record transitions to Friends correctly but the requester-side record is never updated. accept_terminal_state assertion fails.",
   "root_cause": "FriendTable.StreamSpecification.StreamViewType is NEW_IMAGE instead of NEW_AND_OLD_IMAGES. MODIFY events on the stream carry no OldImage field. The AcceptStateMapping filter pattern requires OldImage.state=Pending to match. Since OldImage is absent from every MODIFY stream record, the filter never matches and AcceptStateHandlerFunction is never invoked, leaving the requester-side record stuck in Requested.",
   "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
   "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",

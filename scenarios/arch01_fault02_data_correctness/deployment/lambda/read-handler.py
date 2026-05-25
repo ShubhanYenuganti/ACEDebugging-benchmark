@@ -31,6 +31,6 @@ def handler(event, context):
         return _response(200, item.get("state") if item else None)
     result = table.query(
         KeyConditionExpression="player_id = :pid",
-        ExpressionAttributeValues={":player_id": player_id},
+        ExpressionAttributeValues={":pid": player_id},
     )
     return _response(200, result.get("Items", []))

@@ -4,20 +4,20 @@ import uuid
 
 import boto3
 
-dynamodb = boto3.client("dynamodb")
-
+dynamodb = boto3.resource("dynamodb")
 
 def lambda_handler(event, context):
+    table = dynamodb.Table(os.environ["DYNAMODB_TABLE_NAME"])
     for message in event.get("Records", []):
         body = json.loads(message["body"])
-        dynamodb.put_item(
-            TableName=os.environ["DYNAMODB_TABLE_NAME"],
+        table.put_item(
             Item={
-                "id": {"S": str(uuid.uuid4())},
-                "product_id": {"S": body["product_id"]},
-                "location": {"S": body["location"]},
-                "quantity": {"N": str(body["quantity"])},
-                "update_date": {"S": body["update_date"]},
+                # Generate a new unique id for the DB item, do not look for 'id' in the message body
+                "id": str(uuid.uuid4()),
+                "product_id": body["product_id"],
+                "location": body["location"],
+                "quantity": int(body["quantity"]),
+                "update_date": body["update_date"],
             },
         )
     return {}

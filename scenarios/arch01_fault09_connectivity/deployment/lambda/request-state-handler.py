@@ -24,7 +24,7 @@ def _create_pending(requester_id, receiver_id, timestamp):
                 "state": "Pending",
                 "last_updated": timestamp,
             },
-            ConditionExpression="attribute_not_exists(player_id)",
+            ConditionExpression="attribute_not_exists(player_id) AND attribute_not_exists(friend_id)",
         )
     except ClientError as exc:
         if not _is_conditional(exc):
@@ -36,8 +36,10 @@ def handler(event, context):
     failures = []
     for record in event.get("Records", []):
         try:
-            image = record["dynamodb"]["NewImage"]
-            _create_pending(_s(image, "player_id"), _s(image, "friend_id"), timestamp)
+            # Corrected to use NewImage for INSERT events
+            if "NewImage" in record["dynamodb"]:
+                image = record["dynamodb"]["NewImage"]
+                _create_pending(_s(image, "player_id"), _s(image, "friend_id"), timestamp)
         except Exception:
             failures.append({"itemIdentifier": record["dynamodb"]["SequenceNumber"]})
     return {"batchItemFailures": failures}

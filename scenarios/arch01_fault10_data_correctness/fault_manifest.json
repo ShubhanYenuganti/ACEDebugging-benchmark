@@ -3,6 +3,7 @@
   "fault_class": "data_correctness",
   "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
   "scenario_id": "arch01_fault10_data_correctness",
+  "baseline_idempotent": false,
   "target_resource": "FrontHandlerFunction",
   "target_property": "Properties.Environment.Variables.FRIEND_TABLE",
   "injected_value": "!Ref FrontQueue",

@@ -3,6 +3,7 @@ import os
 from decimal import Decimal
 
 import boto3
+from boto3.dynamodb.conditions import Key
 
 table = boto3.resource("dynamodb").Table(os.environ["FRIEND_TABLE"])
 
@@ -30,7 +31,7 @@ def handler(event, context):
         item = result.get("Item")
         return _response(200, item.get("state") if item else None)
     result = table.query(
-        KeyConditionExpression="player_id = :player_id",
+        KeyConditionExpression=Key("player_id").eq(player_id),
         ExpressionAttributeValues={":player_id": player_id},
     )
     return _response(200, result.get("Items", []))

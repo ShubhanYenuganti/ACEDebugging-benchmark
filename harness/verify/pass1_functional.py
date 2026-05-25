@@ -3,7 +3,6 @@
 Runs the corpus functional_test.py and returns an AssertionRunResult.
 The shared parser handles the ASSERT regex and crash detection.
 """
-import json
 import os
 import subprocess
 import sys
@@ -20,17 +19,8 @@ class Pass1Step:
         return True
 
     def run(self, ctx):
-        if ctx.manifest_path and os.path.isfile(ctx.manifest_path):
-            with open(ctx.manifest_path, "r", encoding="utf-8") as _f:
-                _manifest = json.load(_f)
-            if not _manifest.get("baseline_idempotent", True):
-                skipped = AssertionRunResult(crash_reason="skipped_non_idempotent")
-                ctx.pass1_result = skipped
-                return {
-                    "baseline": "skipped_non_idempotent",
-                    "passed": None,
-                    "baseline_passed": None,
-                }
+        # baseline_idempotent only gates the pre-agent baseline run in run.py.
+        # Post-agent verify always runs the functional test — that's what's being scored.
         result = run_pass1(ctx.corpus_dir)
         ctx.pass1_result = result
         return result.to_baseline_dict()

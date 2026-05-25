@@ -18,7 +18,7 @@ def _is_conditional(exc):
 def _accept_reverse(player_id, friend_id, timestamp):
     try:
         table.update_item(
-            Key={"player_id": friend_id, "friend_id": player_id},
+            Key={"player_id": player_id, "friend_id": friend_id},  # FIX: swap Key for proper update
             ConditionExpression="#state = :requested",
             UpdateExpression="SET #state = :friends, #last_updated = :timestamp",
             ExpressionAttributeNames={
@@ -42,7 +42,11 @@ def handler(event, context):
     for record in event.get("Records", []):
         try:
             image = record["dynamodb"]["NewImage"]
-            _accept_reverse(_s(image, "friend_id"), _s(image, "player_id"), timestamp)
+            player_id = _s(image, "player_id")
+            friend_id = _s(image, "friend_id")
+            # Only update the reverse record (requester's side) if different
+            if player_id != friend_id:
+                _accept_reverse(friend_id, player_id, timestamp)  # maintain caller order for args
         except Exception:
             failures.append({"itemIdentifier": record["dynamodb"]["SequenceNumber"]})
     return {"batchItemFailures": failures}

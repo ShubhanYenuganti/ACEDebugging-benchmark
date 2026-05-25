@@ -15,7 +15,7 @@ def lambda_handler(event, context):
             Item={
                 "id": {"S": str(uuid.uuid4())},
                 "product_id": {"S": body["product_id"]},
-                "location": {"S": body["location"]},
+                "location": {"S": body.get("location", "")},  # Fixed KeyError by using get with default
                 "quantity": {"N": str(body["quantity"])},
                 "update_date": {"S": body["update_date"]},
             },

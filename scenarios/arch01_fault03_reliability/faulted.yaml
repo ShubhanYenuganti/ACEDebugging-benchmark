@@ -159,7 +159,7 @@ Resources:
       Timeout: 120
       Environment:
         Variables:
-          FRIEND_TABLE: friend-table
+          FRIEND_TABLE: !Ref FriendTable
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: request-state-handler.zip

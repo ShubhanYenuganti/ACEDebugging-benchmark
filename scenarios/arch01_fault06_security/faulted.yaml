@@ -95,7 +95,7 @@ Resources:
                   - dynamodb:GetRecords
                   - dynamodb:GetShardIterator
                   - dynamodb:ListStreams
-                Resource: !GetAtt FriendTable.Arn
+                Resource: !GetAtt FriendTable.StreamArn
               - Effect: Allow
                 Action:
                   - dynamodb:PutItem
@@ -149,13 +149,52 @@ Resources:
         S3Bucket: ace-bench-artifacts
         S3Key: front-handler.zip
 
+  RequestStateHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: request-state-handler-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource: !GetAtt FriendTable.StreamArn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt FriendTable.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt StateHandleDLQ.Arn
+
   RequestStateHandlerFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-request-state-handler'
       Runtime: python3.11
       Handler: index.handler
-      Role: !GetAtt StreamHandlerRole.Arn
+      Role: !GetAtt RequestStateHandlerRole.Arn
       Timeout: 120
       Environment:
         Variables:
@@ -242,7 +281,7 @@ Resources:
       FunctionName: !Ref RequestStateHandlerFunction
       FunctionResponseTypes:
         - ReportBatchItemFailures
-      MaximumRetryAttempts: 0
+      MaximumRetryAttempts: 1
       DestinationConfig:
         OnFailure:
           Destination: !GetAtt StateHandleDLQ.Arn

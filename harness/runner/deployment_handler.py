@@ -284,7 +284,14 @@ def handle_submission(scenario_dir: str, run_id: str, start_snapshot: dict, star
             )
             log_deployment(run_id, plan, result)
             return result
-        raise
+        result = DeploymentResult(
+            outcome="deploy_fail",
+            error=f"CloudFormation UpdateStack rejected the submission: {e}",
+            skipped_lambda_files=plan.orphans,
+            packaged_files=[u.rel_path for u in plan.uploads],
+        )
+        log_deployment(run_id, plan, result)
+        return result
 
     try:
         waiter = cf_client.get_waiter("stack_update_complete")

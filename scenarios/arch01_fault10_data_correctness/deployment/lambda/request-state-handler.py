@@ -17,14 +17,15 @@ def _is_conditional(exc):
 
 def _create_pending(requester_id, receiver_id, timestamp):
     try:
+        # Swap player_id and friend_id to receiver_id and requester_id for the pending record
         table.put_item(
             Item={
-                "player_id": receiver_id,
-                "friend_id": requester_id,
+                "player_id": receiver_id,  # fix: receiver is player_id
+                "friend_id": requester_id,  # fix: requester is friend_id
                 "state": "Pending",
                 "last_updated": timestamp,
             },
-            ConditionExpression="attribute_not_exists(player_id)",
+            ConditionExpression="attribute_not_exists(player_id) AND attribute_not_exists(friend_id)",
         )
     except ClientError as exc:
         if not _is_conditional(exc):

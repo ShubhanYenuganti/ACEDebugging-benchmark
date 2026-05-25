@@ -10,7 +10,7 @@ Resources:
       NotificationConfiguration:
         LambdaConfigurations:
           - Event: s3:ObjectCreated:*
-            Function: !GetAtt CSVProcessingToSQSFunction.Arn
+            Function: !Ref CSVProcessingToSQSFunction
 
   InventoryUpdatesDlq:
     Type: AWS::SQS::Queue
@@ -63,7 +63,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
-                Resource: !Sub 'arn:aws:s3:::${AWS::StackName}-raw-uploads/*'
+                Resource: !Sub 'arn:aws:s3:::${AWS::StackName}-inventory-updates/*'
               - Effect: Allow
                 Action:
                   - sqs:SendMessage

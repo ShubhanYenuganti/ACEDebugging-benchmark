@@ -3,6 +3,7 @@
   "fault_class": "data_correctness",
   "architecture": "arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
   "scenario_id": "arch12_fault08_data_correctness",
+  "baseline_idempotent": false,
   "target_resource": "CSVProcessingToSQSFunction",
   "target_property": "deployment/lambda/csv-to-sqs.py:row[\"location\"]",
   "injected_value": "\"loc\": row[\"location\"]",
@@ -11,17 +12,17 @@
     "Change 'loc' back to 'location' as the key in the message body JSON in csv-to-sqs.py so the consumer's body['location'] reference resolves correctly"
   ],
   "invalid_patches": [
-    "Change sqs-to-dynamodb.py to read body['loc'] instead of body['location'] — propagates the schema rename into the database key but does not fix the schema contract",
-    "Add a try/except around body['location'] to silently skip failed rows — hides the error without writing records"
+    "Change sqs-to-dynamodb.py to read body['loc'] instead of body['location'] \u2014 propagates the schema rename into the database key but does not fix the schema contract",
+    "Add a try/except around body['location'] to silently skip failed rows \u2014 hides the error without writing records"
   ],
   "optimal_tool_calls": 4,
   "optimal_files_changed": 1,
   "optimal_lines_changed": 1,
   "optimal_diagnostic_path": [
-    "ace_get_log_tail(function=SQSToDynamoDBFunction) → repeated KeyError: 'location' on every invocation",
-    "ace_check_queue_depth(queue=InventoryUpdatesQueue) → messages present, consumer failing",
-    "ace_invoke_lambda(function=CSVProcessingToSQSFunction) → inspect event structure to confirm sent message shape",
-    "ace_get_log_tail(function=CSVProcessingToSQSFunction) → parser succeeds; compare sent JSON keys to confirm 'loc' vs 'location' mismatch"
+    "ace_get_log_tail(function=SQSToDynamoDBFunction) \u2192 repeated KeyError: 'location' on every invocation",
+    "ace_check_queue_depth(queue=InventoryUpdatesQueue) \u2192 messages present, consumer failing",
+    "ace_invoke_lambda(function=CSVProcessingToSQSFunction) \u2192 inspect event structure to confirm sent message shape",
+    "ace_get_log_tail(function=CSVProcessingToSQSFunction) \u2192 parser succeeds; compare sent JSON keys to confirm 'loc' vs 'location' mismatch"
   ],
   "concurrency_probe_n": null,
   "deployment_check": "CREATE_COMPLETE",

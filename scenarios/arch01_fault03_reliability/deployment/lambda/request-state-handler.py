@@ -24,10 +24,12 @@ def _create_pending(requester_id, receiver_id, timestamp):
                 "state": "Pending",
                 "last_updated": timestamp,
             },
-            ConditionExpression="attribute_not_exists(player_id)",
+            ConditionExpression="attribute_not_exists(player_id) AND attribute_not_exists(friend_id)",
         )
     except ClientError as exc:
-        pass
+        # Only silently ignore ConditionCheckFailed, propagate others
+        if not _is_conditional(exc):
+            raise
 
 
 def handler(event, context):
@@ -36,7 +38,12 @@ def handler(event, context):
     for record in event.get("Records", []):
         try:
             image = record["dynamodb"]["NewImage"]
-            _create_pending(_s(image, "player_id"), _s(image, "friend_id"), timestamp)
+            requester = _s(image, "player_id")
+            receiver = _s(image, "friend_id")
+            if not requester or not receiver:
+                raise ValueError(f"Missing player_id or friend_id in record: {record}")
+            _create_pending(requester, receiver, timestamp)
         except Exception:
             failures.append({"itemIdentifier": record["dynamodb"]["SequenceNumber"]})
+            continue
     return {"batchItemFailures": failures}

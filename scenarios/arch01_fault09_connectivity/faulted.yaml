@@ -248,7 +248,7 @@ Resources:
           Destination: !GetAtt StateHandleDLQ.Arn
       FilterCriteria:
         Filters:
-          - Pattern: '{"eventName":["MODIFY"],"dynamodb":{"NewImage":{"state":{"S":["Requested"]}}}}'
+          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"state":{"S":["Requested"]}}}}'
 
   AcceptStateMapping:
     Type: AWS::Lambda::EventSourceMapping
@@ -265,7 +265,7 @@ Resources:
           Destination: !GetAtt StateHandleDLQ.Arn
       FilterCriteria:
         Filters:
-          - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"state":{"S":["Requested"]}}}}'
+          - Pattern: '{"eventName":["MODIFY"],"dynamodb":{"NewImage":{"state":{"S":["Friends"]}}}}'
 
   RejectStateMapping:
     Type: AWS::Lambda::EventSourceMapping

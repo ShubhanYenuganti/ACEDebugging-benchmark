@@ -72,7 +72,8 @@ Resources:
                   - sqs:GetQueueAttributes
                 Resource: !GetAtt InventoryUpdatesQueue.Arn
               - Effect: Allow
-                Action: dynamodb:PutItem
+                Action:
+                  - dynamodb:PutItem
                 Resource: !GetAtt InventoryUpdatesTable.Arn
 
   CSVProcessingToSQSFunction:
@@ -100,7 +101,7 @@ Resources:
       Timeout: 60
       Environment:
         Variables:
-          DYNAMODB_TABLE_NAME: !Sub '${AWS::StackName}-inventory-archive'
+          DYNAMODB_TABLE_NAME: !Ref InventoryUpdatesTable
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: sqs-to-dynamodb.zip

@@ -24,7 +24,7 @@ def _create_pending(requester_id, receiver_id, timestamp):
                 "state": "Pending",
                 "last_updated": timestamp,
             },
-            ConditionExpression="attribute_not_exists(player_id)",
+            ConditionExpression="attribute_not_exists(player_id) AND attribute_not_exists(friend_id)",
         )
     except ClientError as exc:
         if not _is_conditional(exc):

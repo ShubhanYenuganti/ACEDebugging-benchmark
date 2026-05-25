@@ -3,30 +3,31 @@
   "fault_class": "security",
   "architecture": "arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
   "scenario_id": "arch12_fault10_security",
+  "baseline_idempotent": false,
   "target_resource": "CSVProcessingToSQSFunction",
   "target_property": "Properties.ReservedConcurrentExecutions",
   "injected_value": 0,
   "original_value": null,
   "valid_fixes": [
-    "Remove ReservedConcurrentExecutions from CSVProcessingToSQSFunction.Properties and fix the s3:GetObject Resource ARN suffix from raw-uploads/* to inventory-updates/* — both changes are required"
+    "Remove ReservedConcurrentExecutions from CSVProcessingToSQSFunction.Properties and fix the s3:GetObject Resource ARN suffix from raw-uploads/* to inventory-updates/* \u2014 both changes are required"
   ],
   "invalid_patches": [
-    "Fixing only ReservedConcurrentExecutions without correcting the s3:GetObject resource — parser runs but fails with AccessDenied on every GetObject call",
-    "Fixing only the s3:GetObject resource without removing ReservedConcurrentExecutions: 0 — parser remains permanently throttled and never invoked"
+    "Fixing only ReservedConcurrentExecutions without correcting the s3:GetObject resource \u2014 parser runs but fails with AccessDenied on every GetObject call",
+    "Fixing only the s3:GetObject resource without removing ReservedConcurrentExecutions: 0 \u2014 parser remains permanently throttled and never invoked"
   ],
   "optimal_tool_calls": 4,
   "optimal_files_changed": 1,
   "optimal_lines_changed": 2,
   "optimal_diagnostic_path": [
-    "ace_check_queue_depth(queue=InventoryUpdatesQueue) → visible=0, in_flight=0 — no messages ever arrived",
-    "ace_describe_resource(resource=CSVProcessingToSQSFunction) → ReservedConcurrentExecutions: 0 — parser is fully throttled",
-    "ace_get_log_tail(function=CSVProcessingToSQSFunction) → AccessDenied: s3:GetObject on ace-bench-stack-inventory-updates bucket (after concurrency fix)",
-    "ace_get_iam_role(role=InventoryFunctionRole) → s3:GetObject Resource ends in raw-uploads/* instead of inventory-updates/*; ace_simulate_policy confirms implicitDeny"
+    "ace_check_queue_depth(queue=InventoryUpdatesQueue) \u2192 visible=0, in_flight=0 \u2014 no messages ever arrived",
+    "ace_describe_resource(resource=CSVProcessingToSQSFunction) \u2192 ReservedConcurrentExecutions: 0 \u2014 parser is fully throttled",
+    "ace_get_log_tail(function=CSVProcessingToSQSFunction) \u2192 AccessDenied: s3:GetObject on ace-bench-stack-inventory-updates bucket (after concurrency fix)",
+    "ace_get_iam_role(role=InventoryFunctionRole) \u2192 s3:GetObject Resource ends in raw-uploads/* instead of inventory-updates/*; ace_simulate_policy confirms implicitDeny"
   ],
   "concurrency_probe_n": null,
   "deployment_check": "CREATE_COMPLETE",
   "observability_check": "functional_test assertions 'inventory_records_written' and 'queue_drained_terminal_state' fail",
-  "observable_symptom": "CSV upload succeeds. Queue depth stays at zero. Consumer is never invoked. The CSV parser produces zero log output — not even a function start entry — because throttled invocations are rejected before initialization. No error surfaces without inspecting the parser's concurrency configuration.",
+  "observable_symptom": "CSV upload succeeds. Queue depth stays at zero. Consumer is never invoked. The CSV parser produces zero log output \u2014 not even a function start entry \u2014 because throttled invocations are rejected before initialization. No error surfaces without inspecting the parser's concurrency configuration.",
   "root_cause": "CSVProcessingToSQSFunction has ReservedConcurrentExecutions set to 0, which throttles all invocations before execution begins and produces no logs. After removing the concurrency limit, the parser is invoked but immediately fails with AccessDenied on s3:GetObject because the IAM role's s3:GetObject Resource ARN references raw-uploads/* instead of inventory-updates/*. Both faults must be corrected for the pipeline to function.",
   "corpus_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
   "functional_test_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/functional_test.py",

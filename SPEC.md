@@ -56,15 +56,16 @@ ace-bench/
 │   │   ├── localstack_client.py
 │   │   ├── cfn_lint_runner.py
 │   │   ├── file_differ.py
-│   │   └── result_logger.py
-│   ├── mcp_server/              # Phase B — 50 tools, 27 services
+│   │   ├── result_logger.py
+│   │   └── template_parser.py   # extract S3Key stems from CloudFormation YAML
+│   ├── mcp_server/              # Phase B — 57 tools, 27 services
 │   │   ├── index.js             # spreads all 5 tool arrays
 │   │   ├── package.json
 │   │   └── tools/
 │   │       ├── probe.js          # 6 core probe tools
-│   │       ├── probe_extended.js # 19 extended probe tools
+│   │       ├── probe_extended.js # 22 extended probe tools
 │   │       ├── observe.js        # 6 core observe tools
-│   │       ├── observe_extended.js # 17 extended observe tools
+│   │       ├── observe_extended.js # 21 extended observe tools
 │   │       └── score.js          # 2 gated score tools
 │   ├── runner/                  # Phase C
 │   │   ├── scenario_runner.py
@@ -97,6 +98,7 @@ ace-bench/
         ├── tool_call_trace.json
         ├── file_change_log.json
         ├── faulted_baseline.json
+        ├── submitted.yaml       # snapshot of faulted.yaml at submission time
         ├── verify_result.json
         └── score.json
 ```
@@ -433,7 +435,7 @@ ace_get_environment_variables(function_name)
 
 ### B2b — Extended probe tools (`tools/probe_extended.js`)
 
-Nineteen additional probe tools covering services beyond the core set.
+Twenty-two additional probe tools covering services beyond the core set.
 Each follows the same pattern as B2: structured input, raw AWS SDK
 response, `{error, error_type}` on failure. All share a single
 `awsConfig` identical to B1.
@@ -457,12 +459,15 @@ ace_assume_role(role_arn, session_name)                   → {access_key_id, ex
 ace_get_parameter(name, with_decryption?)                 → {name, type, value, version}
 ace_list_access_points(account_id, bucket?)               → [{name, arn, bucket, network_origin}]
 ace_put_metric_data(namespace, metric_name, value, unit?) → {success, namespace, metric_name, value}
-ace_simulate_policy(policy_source_arn, action_names, resource_arns?) → [{action, resource, decision}]
+ace_simulate_policy(policy_source_arn, action_names[], resource_arns[]) → [{action, resource, decision}]
+ace_scan_table(table_name, filter_expression?, expression_values?) → {items[], count, scanned_count}
+ace_scan_table_range(table_name, key_condition, expression_values, index_name?, limit?) → {items[], count}
+ace_peek_queue_messages(queue_name, max_messages?)        → {messages[], count}
 ```
 
 ### B3b — Extended observe tools (`tools/observe_extended.js`)
 
-Seventeen additional observe tools. Same pattern as B3.
+Twenty-one additional observe tools. Same pattern as B3.
 
 ```
 ace_get_sns_topic(topic_arn)                 → {arn, subscriptions_confirmed, subscriptions_pending, policy}
@@ -482,6 +487,10 @@ ace_describe_secret(secret_id)             → {name, arn, rotation_enabled, rot
 ace_describe_parameters(path_prefix?, parameter_type?) → [{name, type, version, tier}]
 ace_get_public_access_block(account_id)    → {block_public_acls, ignore_public_acls, ...}
 ace_get_metric_statistics(namespace, metric_name, period?, statistics?, ...) → {label, datapoints[]}
+ace_get_s3_object_content(bucket, key)     → {content, size, truncated, content_type, last_modified}
+ace_filter_log_events(log_group, filter_pattern, start_time?, limit?) → {events[], matched_count}
+ace_get_stack_events(stack_name, filter_failed?) → {events[]}
+ace_get_lambda_metrics(function_name, period?) → {invocations, errors, throttles, duration_avg_ms}
 ```
 
 ### B4 — Score tools (`tools/score.js`)
@@ -527,17 +536,17 @@ Write `tests/test_mcp_server.js` using Node's built-in test runner
 (`node --test`). LocalStack must be running before tests start.
 
 **Fixtures created in `before()` hook:**
-- Lambda function (identity stub), DynamoDB table, SQS queue,
+- Lambda function (identity stub), DynamoDB table (hash key), DynamoDB table (hash+range key), SQS queue,
   CloudFormation stack (core fixtures)
 - SNS topic, Kinesis stream, KMS key, Secrets Manager secret,
   SSM parameter (extended fixtures)
 
-**Test coverage (76 tests):**
+**Test coverage (124 tests):**
 - Core probe tools (6): response shape + missing-arg error for each
 - Core observe tools (6): response shape + error conditions
 - Score tools (2): unauthorized without key, unauthorized with wrong key
-- Extended probe tools (19): success path + missing-arg/not-found error
-- Extended observe tools (17): success path + missing-arg/not-found error
+- Extended probe tools (22): success path + missing-arg/not-found error
+- Extended observe tools (21): success path + missing-arg/not-found error
 - Smoke test: `probeExtendedTools` and `observeExtendedTools` are arrays
 
 All tools must return structured responses, never throw uncaught
@@ -1385,19 +1394,21 @@ clear error instead of silently timing out.
 
 ### G — Verification
 
-Tests in `tests/test_agent_loop.py` (20 tests):
+Tests in `tests/test_agent_loop.py` (42 tests):
 
 - MCP→OpenAI tool conversion shape
 - Score tool filtering (`ace_verify_fix`, `ace_score_run` blocked)
 - `read_file`: content return, `fault_manifest.json` blocked, `known_good.yaml` blocked, path traversal blocked
 - `write_file`: `deployment/` allowed, `faulted.yaml` allowed, outside blocked, path traversal blocked
 - `list_directory`: correct entries
-- `submit_fix`: signal file written with correct JSON content
+- `submit_fix`: signal file written with correct JSON content; blocked without prior `write_file`
 - Unknown tool dispatch returns error
 - `FILE_TOOL_DEFINITIONS` OpenAI format validation
 - Loop exits on `stop`, `end_turn`, `submit_fix`
 - Loop respects `max_turns`
 - MCP tool calls logged, file tool calls not logged
+- Text-mode retry: standard message on first/second failure, escalated message at threshold
+- Verbose mode: reasoning text streamed, `write_file` previews first 30 lines
 
 ---
 
@@ -1432,3 +1443,88 @@ Phase A (shared utilities)
 No phase should begin until all phases it depends on have passed
 their verification tests. A phase is not complete until its tests
 pass — working code without tests does not count.
+
+---
+
+## Post-Phase Harness Improvements (Themes A–F)
+
+After Phases A–G were complete, six correctness themes were identified and implemented
+as cross-cutting fixes. Each theme is independent; all are covered by the existing test
+suites (test counts updated above).
+
+### Theme A — Template-Driven Lambda Packaging
+
+**Problem:** `deployment_handler.py` assumed a flat `lambda/<stem>.py` layout and used
+`template_body` (a string) instead of `template_path` when building the packaging plan,
+causing directory-based Lambda packages to be silently skipped.
+
+**Fix:**
+- Added `harness/shared/template_parser.py` — `extract_s3key_stems(template_path)` parses
+  the CloudFormation YAML and returns the set of S3Key stems referenced in Lambda functions.
+- Replaced the old heuristic scan with a template-driven `_build_packaging_plan` that only
+  zips files whose stems appear in the template.
+- Added `find_source_for_stem(stem, deployment_dir)` — prefers a subdirectory named `stem`
+  (directory-based packaging) over a flat `stem.py` file.
+- Added `_zip_dir(source_dir)` — zips an entire directory into a deployment package.
+- Fixed the `handle_submission` call site to pass `template_path` (not `template_body`).
+
+### Theme B — Text-Mode Tool-Call Extraction
+
+**Problem:** Some models (Gemini, Ollama) emit tool calls as fenced JSON in the message
+text rather than in the structured `tool_calls` field. The loop silently broke out on the
+first parse failure, causing runs to end immediately with no fix submitted.
+
+**Fix:**
+- Added `log_text_mode_failure(run_id, turn, content, error)` to `result_logger.py` —
+  appends entries to `text_mode_failures.json` for post-run diagnostics.
+- Replaced the `retried_no_tool: bool` flag with `consecutive_no_tool_failures: int`.
+- Added `max_no_tool_failures` parameter to `run_agent_loop` (default `3`).
+- On no-tool response: increment counter, log failure, inject a retry message with a
+  truncated content preview. At threshold, inject an escalated message. Never `break` —
+  let `max_turns` exhaust naturally.
+- Standard retry message includes the first 300 chars of model output so the model can
+  self-correct its formatting.
+
+### Theme C — State-Machine Safety
+
+**Problem:** Three bugs allowed the submission/deployment state machine to enter
+unrecoverable states: (1) a crash during manifest hiding left the scenario unrunnable on
+restart; (2) `submitted.yaml` was read by Pass 3 but never written; (3) a failed retry
+deploy silently overwrote the `initial_deployment_outcome` used for scoring.
+
+**Fix:**
+- Added `_recover_hidden_manifest()` in `run.py` — called before scenario validation,
+  idempotently restores a partially-hidden `fault_manifest.json.hidden` back to its
+  original name so restarts succeed.
+- `ScenarioRunner` now writes `submitted.yaml` (a snapshot of `faulted.yaml`) the moment
+  `submitted = True` is set. Pass 3 reads `submitted.yaml` instead of `faulted.yaml`.
+- Added `initial_deployment_outcome` field — frozen at first `UPDATE_COMPLETE`; a
+  `_resolve_deployment_outcome()` helper in `run.py` reads this field for scoring so that
+  a failed retry deploy cannot change the scored outcome.
+
+### Theme D — Score Signal Accuracy
+
+**Problem:** Several scoring inputs were inaccurate: `tool_call_count` was read from the
+trace file length rather than the harness counter; the efficiency dimension used stale
+optimal values in edge cases; classification edge cases were not handled consistently.
+
+**Fix:** Scoring inputs sourced directly from the authoritative harness fields; edge cases
+in efficiency threshold formula and classification logic tightened.
+
+### Theme E — IO Safety
+
+**Problem:** Concurrent writes to `tool_call_trace.json` and `text_mode_failures.json`
+could corrupt JSON due to non-atomic appends.
+
+**Fix:** All append-style writes in `result_logger.py` use a per-file `threading.Lock`
+acquired before read-modify-write. The lock map is module-level and lazily initialized.
+
+### Theme F — Naming, Dead Code, and Baseline Idempotency
+
+**Problem:** Several function names had drifted from their behaviour; dead code branches
+added noise; the faulted baseline was re-recorded on every startup even when the scenario
+had not changed.
+
+**Fix:** Renamed functions to match their actual behaviour, removed dead branches, and
+added an idempotency check so `faulted_baseline.json` is only overwritten when the
+deployed stack differs from the previous baseline run.

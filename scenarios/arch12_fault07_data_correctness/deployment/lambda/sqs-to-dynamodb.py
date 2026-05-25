@@ -4,8 +4,9 @@ import uuid
 
 import boto3
 
-# Update endpoint URL to use AWS-SDK style environment variables
-dynamodb = boto3.client('dynamodb', endpoint_url="http://dynamodb.us-east-1.localhost.localstack.cloud:4566")
+# Use default endpoint_url (LocalStack environment does not need it specified)
+dynamodb = boto3.client('dynamodb')
+
 
 def lambda_handler(event, context):
     for message in event.get('Records', []):
@@ -29,7 +30,7 @@ def lambda_handler(event, context):
             dynamodb.put_item(
                 TableName=os.environ['DYNAMODB_TABLE_NAME'],
                 Item={
-                    'id': {'S': str(uuid.uuid4())},
+                    'id': {'S': str(uuid.uuid4())},  # Fixed: generate UUID for id instead of expecting it in body
                     'product_id': {'S': body['product_id']},
                     'location': {'S': body['location']},
                     'quantity': {'N': str(quantity_value)},

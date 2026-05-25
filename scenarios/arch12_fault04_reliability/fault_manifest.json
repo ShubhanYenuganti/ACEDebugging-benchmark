@@ -3,6 +3,7 @@
   "fault_class": "reliability",
   "architecture": "arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
   "scenario_id": "arch12_fault04_reliability",
+  "baseline_idempotent": false,
   "target_resource": "SQSToDynamoDBFunction",
   "target_property": "Properties.Environment.Variables.DYNAMODB_TABLE_NAME",
   "injected_value": "!Sub '${AWS::StackName}-inventory-archive'",
@@ -11,23 +12,23 @@
     "Restore SQSToDynamoDBFunction.Environment.Variables.DYNAMODB_TABLE_NAME to !Ref InventoryUpdatesTable so the consumer writes to the deployed table"
   ],
   "invalid_patches": [
-    "Create a DynamoDB table named after the stack's inventory-archive suffix to match the wrong env var — adds a spurious table instead of correcting the reference",
-    "Grant dynamodb:PutItem on '*' to the role — does not fix the non-existent table name referenced by the env var"
+    "Create a DynamoDB table named after the stack's inventory-archive suffix to match the wrong env var \u2014 adds a spurious table instead of correcting the reference",
+    "Grant dynamodb:PutItem on '*' to the role \u2014 does not fix the non-existent table name referenced by the env var"
   ],
   "optimal_tool_calls": 5,
   "optimal_files_changed": 1,
   "optimal_lines_changed": 1,
   "optimal_diagnostic_path": [
-    "ace_check_queue_depth(queue=InventoryUpdatesQueue) → messages present and consumer being invoked (in-flight count non-zero)",
-    "ace_get_log_tail(function=SQSToDynamoDBFunction) → ResourceNotFoundException for table ace-bench-stack-inventory-archive on every invocation",
-    "ace_get_environment_variables(function=SQSToDynamoDBFunction) → DYNAMODB_TABLE_NAME=ace-bench-stack-inventory-archive does not match deployed table",
-    "ace_get_stack_outputs() → InventoryUpdatesTableName=ace-bench-stack-inventory-updates — confirms env var references a non-existent table",
-    "ace_check_queue_depth(queue=InventoryUpdatesDlq) → DLQ depth 0 despite repeated consumer failures — messages silently dropped after maxReceiveCount exhausted"
+    "ace_check_queue_depth(queue=InventoryUpdatesQueue) \u2192 messages present and consumer being invoked (in-flight count non-zero)",
+    "ace_get_log_tail(function=SQSToDynamoDBFunction) \u2192 ResourceNotFoundException for table ace-bench-stack-inventory-archive on every invocation",
+    "ace_get_environment_variables(function=SQSToDynamoDBFunction) \u2192 DYNAMODB_TABLE_NAME=ace-bench-stack-inventory-archive does not match deployed table",
+    "ace_get_stack_outputs() \u2192 InventoryUpdatesTableName=ace-bench-stack-inventory-updates \u2014 confirms env var references a non-existent table",
+    "ace_check_queue_depth(queue=InventoryUpdatesDlq) \u2192 DLQ depth 0 despite repeated consumer failures \u2014 messages silently dropped after maxReceiveCount exhausted"
   ],
   "concurrency_probe_n": null,
   "deployment_check": "CREATE_COMPLETE",
   "observability_check": "functional_test assertions 'inventory_records_written' and 'queue_drained_terminal_state' fail",
-  "observable_symptom": "The consumer function is invoked and logs show repeated ResourceNotFoundException errors referencing a table named inventory-archive that does not exist. No records are written to the database. After retries are exhausted, the messages disappear from both the main queue and the dead-letter queue — they vanish silently rather than accumulating in the dead-letter queue.",
+  "observable_symptom": "The consumer function is invoked and logs show repeated ResourceNotFoundException errors referencing a table named inventory-archive that does not exist. No records are written to the database. After retries are exhausted, the messages disappear from both the main queue and the dead-letter queue \u2014 they vanish silently rather than accumulating in the dead-letter queue.",
   "root_cause": "SQSToDynamoDBFunction.Environment.Variables.DYNAMODB_TABLE_NAME is set to !Sub '${AWS::StackName}-inventory-archive' instead of !Ref InventoryUpdatesTable. The consumer calls put_item on a non-existent table, raising ResourceNotFoundException on every invocation. After 5 failed receives (maxReceiveCount), SQS attempts to route messages to the DLQ, but the execution role lacks sqs:SendMessage permission for the DLQ ARN, so DLQ delivery also fails silently and messages are dropped entirely.",
   "corpus_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
   "functional_test_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/functional_test.py",

@@ -29,12 +29,15 @@ The model never sees `fault_manifest.json` or `known_good.yaml`. It only sees th
 
 | Phase | What it builds | Status |
 |-------|---------------|--------|
-| **A** | Shared Python utilities (LocalStack client, cfn-lint runner, file differ, result logger) | ✅ Complete — 17/17 tests passing |
-| **B** | Diagnostic MCP server with 14 tools (6 probe, 6 observe, 2 score stubs) | ✅ Complete — 15/15 tests passing, server registered |
-| **C** | Scenario runner + deployment handler (deploy faulted template, intercept fix submission) | ✅ Complete — 8/8 tests passing |
-| **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | ✅ Complete — 20/20 tests passing |
-| **E** | Harness entry point `run.py` — ties all phases together end-to-end | ✅ Complete — E2E test passing (45/45 Python tests, exit 0, classification `root_cause`) |
-| **F** | Autonomous scoring agent — Claude Sonnet scores 5 dimensions, writes `score.json` | 🔲 Not started |
+| **A** | Shared Python utilities (LocalStack client, cfn-lint runner, file differ, result logger) | ✅ Complete — covered by `tests/test_shared.py` |
+| **B** | Diagnostic MCP server with 57 tools (6 probe, 22 probe-ext, 6 observe, 21 observe-ext, 2 score) | ✅ Complete — 124/124 Node tests passing |
+| **C** | Scenario runner + deployment handler (deploy faulted template, intercept fix submission) | ✅ Complete — 27 Python test functions |
+| **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | ✅ Complete — 2 Python test functions |
+| **E** | Harness entry point `run.py` — ties all phases together end-to-end | ✅ Complete — 1 E2E Python test function |
+| **F** | Autonomous scoring agent — Claude Sonnet scores 5 dimensions, writes `score.json` | ✅ Complete — 21 Python test functions |
+| **G** | Inline agent runner — LiteLLM universal adapter, drives any model end-to-end | ✅ Complete — 42 Python test functions |
+
+Current direct test inventory: 126 Python `def test_*` functions across `tests/*.py` plus 124 Node MCP test cases in `tests/test_mcp_server.js`.
 
 ---
 
@@ -80,8 +83,14 @@ pytest tests/test_verify.py -v
 # Phase E — End-to-end harness (requires LocalStack + .env with HARNESS_API_KEY)
 pytest tests/test_e2e.py -v -s
 
+# Phase F — Scoring agent (mocked Anthropic API)
+pytest tests/test_scoring.py -v
+
+# Phase G — Inline agent runner
+pytest tests/test_agent_loop.py -v
+
 # All Python phases at once
-pytest tests/test_shared.py tests/test_runner.py tests/test_verify.py -v
+pytest tests/ -v
 ```
 
 ### Register the MCP server
@@ -108,51 +117,67 @@ ace-bench/
 │   │   ├── localstack_client.py    # boto3 singletons for all AWS services
 │   │   ├── cfn_lint_runner.py      # cfn-lint subprocess wrapper
 │   │   ├── file_differ.py          # snapshot + diff for deployment dir
-│   │   └── result_logger.py        # thread-safe JSON result writer
-│   ├── mcp_server/           # Phase B — Node.js MCP server
-│   │   ├── index.js                # McpServer + StdioTransport, stderr logging
+│   │   ├── result_logger.py        # thread-safe JSON result writer
+│   │   └── template_parser.py      # extract S3Key stems from CloudFormation YAML
+│   ├── mcp_server/           # Phase B — Node.js MCP server (57 tools, 27 services)
+│   │   ├── index.js                # McpServer + StdioTransport, spreads all 5 tool arrays
 │   │   ├── package.json
 │   │   └── tools/
-│   │       ├── probe.js            # 6 active-probe tools
-│   │       ├── observe.js          # 6 passive-observe tools
-│   │       └── score.js            # 2 gated score stubs (Phase D)
+│   │       ├── probe.js            # 6 core probe tools
+│   │       ├── probe_extended.js   # 22 extended probe tools
+│   │       ├── observe.js          # 6 core observe tools
+│   │       ├── observe_extended.js # 21 extended observe tools
+│   │       └── score.js            # 2 gated score tools
 │   ├── runner/               # Phase C — Scenario runner
 │   │   ├── context_builder.py      # build_context: reads scenario files, guards manifest
 │   │   ├── deployment_handler.py   # handle_submission: lint → zip → CF update
-│   │   └── scenario_runner.py      # ScenarioRunner: lifecycle, tool call interception
+│   │   └── scenario_runner.py      # ScenarioRunner: lifecycle, submitted.yaml snapshot
 │   ├── verify/               # Phase D — Verify loop
 │   │   ├── pass1_functional.py     # Run functional_test.py, parse ASSERT lines
 │   │   ├── pass2_regression.py     # Detect pass→fail regressions vs faulted baseline
 │   │   ├── pass3_classification.py # Structural diff + invalid patch detection
 │   │   ├── pass4_concurrency.py    # N concurrent requests, classify by status code
 │   │   └── verify_loop.py          # Orchestrate all 4 passes, write verify_result.json
-│   ├── run.py                # Phase E — CLI entry point (argparse + dotenv + verify orchestration)
-│   └── scoring/              # Phase F — autonomous scoring agent
-│       ├── agent.py                # Claude Sonnet client (call_scoring_agent)
-│       ├── scorer.py               # Orchestrator: load inputs → score → write score.json
-│       ├── gate.py                 # Re-exports check_gate from quality.py
-│       └── dimensions/
-│           ├── identification.py   # D1: agent-evaluated (weight 0.20)
-│           ├── fix_correctness.py  # D2: deterministic from pass1 (weight 0.25)
-│           ├── regression.py       # D3: deterministic penalty (subtracted)
-│           ├── efficiency.py       # D4: threshold formula + agent rationale (weight 0.15)
-│           └── quality.py          # D5: agent-evaluated + quality gate (weight 0.40)
-├── corpus/                   # Known-good templates + functional tests (HITL-built)
-├── scenarios/                # Faulted deployments for evaluation runs
+│   ├── run.py                # Phase E — CLI entry point (argparse + dotenv + LiteLLM agent)
+│   ├── scoring/              # Phase F — autonomous scoring agent
+│   │   ├── agent.py                # Claude Sonnet client (call_scoring_agent)
+│   │   ├── scorer.py               # Orchestrator: load inputs → score → write score.json
+│   │   ├── gate.py                 # Re-exports check_gate from quality.py
+│   │   └── dimensions/
+│   │       ├── identification.py   # D1: agent-evaluated (weight 0.20)
+│   │       ├── fix_correctness.py  # D2: deterministic from pass1 (weight 0.25)
+│   │       ├── regression.py       # D3: deterministic penalty (subtracted)
+│   │       ├── efficiency.py       # D4: threshold formula + agent rationale (weight 0.15)
+│   │       └── quality.py          # D5: agent-evaluated + quality gate (weight 0.40)
+│   └── agent/                # Phase G — inline agent runner
+│       ├── __init__.py
+│       ├── tools.py                # MCP→OpenAI conversion, file tool dispatch, path guards
+│       └── loop.py                 # async LiteLLM loop, text-mode retry, verbose streaming
+├── corpus/                   # 4 architectures, each with known_good.yaml + functional_test.py
+│   ├── arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/
+│   ├── arch_02_fuzzy_movie_search/
+│   ├── arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/
+│   └── arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/
+├── scenarios/                # 40 faulted scenarios (10 per architecture)
 ├── results/                  # Per-run output (gitignored)
 │   └── [run_id]/
 │       ├── scenario_id.txt, tool_call_trace.json, file_change_log.json
-│       ├── faulted_baseline.json, verify_result.json
+│       ├── faulted_baseline.json, submitted.yaml, verify_result.json
 │       └── score.json              # Written by Phase F after every completed run
 ├── tests/
 │   ├── stubs/
 │   │   └── stub_model.py     # E2E: applies known fix, triggers redeployment
-│   ├── test_shared.py        # Phase A gate (pytest) — 17 tests
-│   ├── test_mcp_server.js    # Phase B gate (node:test) — 15 tests
-│   ├── test_runner.py        # Phase C gate (pytest) — 8 tests
-│   ├── test_verify.py        # Phase D gate (pytest) — 20 tests
+│   ├── test_shared.py        # Phase A gate (pytest)
+│   ├── test_mcp_server.js    # Phase B gate (node:test) — 124 tests
+│   ├── test_runner.py        # Phase C gate (pytest) — 27 test functions
+│   ├── test_verify.py        # Phase D gate (pytest) — 2 test functions
 │   ├── test_e2e.py           # Phase E gate (pytest, requires live LocalStack) — 1 test
-│   └── test_scoring.py       # Phase F gate (pytest, mocked Anthropic API)
+│   ├── test_scoring.py       # Phase F gate (pytest, mocked Anthropic API) — 21 test functions
+│   ├── test_agent_loop.py    # Phase G gate (pytest) — 42 test functions
+│   ├── test_functional_test_helpers.py # Functional test helper parsing — 6 test functions
+│   ├── test_assertion_parser.py        # ASSERT parser — 10 test functions
+│   ├── test_template_parser.py         # CloudFormation template parsing — 8 test functions
+│   └── test_types.py                   # Shared type contracts — 8 test functions
 └── SPEC.md                   # Full design spec
 ```
 
@@ -160,9 +185,9 @@ ace-bench/
 
 ## MCP Diagnostic Tools
 
-The 14 tools available to a model under evaluation:
+57 tools across 27 LocalStack services. The model under evaluation sees 55 — score tools are filtered out at the agent layer.
 
-### Probe tools — active inspection
+### Probe tools — active inspection (6)
 
 | Tool | Description |
 |------|-------------|
@@ -170,28 +195,81 @@ The 14 tools available to a model under evaluation:
 | `ace_invoke_lambda` | Direct Lambda invocation by function name |
 | `ace_check_queue_depth` | SQS queue depth (available, in-flight, oldest age) |
 | `ace_read_table_item` | DynamoDB single-item read by key |
-| `ace_check_event_source` | Lambda event source mapping list |
+| `ace_check_event_source` | Lambda event source mappings; accepts `event_source_arn` for reverse lookup |
 | `ace_check_s3_object` | S3 object existence + metadata |
 
-### Observe tools — configuration inspection
+### Extended probe tools — active inspection (22)
 
 | Tool | Description |
 |------|-------------|
-| `ace_describe_resource` | Full config of a CloudFormation stack resource |
+| `ace_publish_sns` | Publish a message to an SNS topic |
+| `ace_put_events` | Send custom events to an EventBridge bus |
+| `ace_start_execution` | Start a Step Functions execution and poll for result |
+| `ace_count_open_executions` | Count open SWF workflow executions in a domain |
+| `ace_send_test_email` | Send a test email via SES |
+| `ace_check_instance_state` | EC2 instance state, type, and IP addresses |
+| `ace_check_hosted_zone` | Route 53 hosted zone record count and type |
+| `ace_list_resolver_endpoints` | Route 53 Resolver endpoints, filterable by direction |
+| `ace_put_kinesis_record` | Put a record to a Kinesis stream |
+| `ace_put_firehose_record` | Put a record to a Kinesis Firehose delivery stream |
+| `ace_get_stream_records` | Read records from all shards of a DynamoDB Stream |
+| `ace_encrypt_decrypt` | KMS encrypt then decrypt a payload, confirm roundtrip |
+| `ace_get_secret` | Retrieve a Secrets Manager secret value |
+| `ace_get_caller_identity` | STS GetCallerIdentity (account, user, ARN) |
+| `ace_assume_role` | STS AssumeRole and return temporary credentials |
+| `ace_get_parameter` | Read an SSM Parameter Store value |
+| `ace_list_access_points` | List S3 Control access points for a bucket |
+| `ace_put_metric_data` | Publish a CloudWatch metric data point |
+| `ace_simulate_policy` | IAM policy simulation for action/resource pairs |
+| `ace_scan_table` | Full DynamoDB Scan with optional filter expression |
+| `ace_scan_table_range` | DynamoDB Query with key condition expression; supports GSI |
+| `ace_peek_queue_messages` | SQS ReceiveMessage peek without deleting (up to 10) |
+
+### Observe tools — configuration inspection (6)
+
+| Tool | Description |
+|------|-------------|
+| `ace_describe_resource` | Full config of any CloudFormation stack resource (type-dispatched) |
 | `ace_list_resources` | All resources in the stack, filterable by type |
-| `ace_get_iam_role` | IAM role with inline and attached policies, decoded |
-| `ace_get_log_tail` | Recent CloudWatch log lines for a Lambda function |
+| `ace_get_iam_role` | IAM role with inline and attached policies fully expanded |
+| `ace_get_log_tail` | Recent CloudWatch log lines across multiple streams, merged by timestamp |
 | `ace_get_stack_outputs` | CloudFormation stack outputs as a flat dict |
 | `ace_get_environment_variables` | Lambda function environment variables |
 
-### Score tools — harness only
+### Extended observe tools — configuration inspection (21)
+
+| Tool | Description |
+|------|-------------|
+| `ace_get_sns_topic` | SNS topic attributes, subscription counts, and policy |
+| `ace_get_eventbridge_rule` | EventBridge rule state, schedule/pattern, and targets |
+| `ace_get_schedule` | EventBridge Scheduler schedule expression and target |
+| `ace_describe_state_machine` | Step Functions state machine definition and role |
+| `ace_describe_swf_domain` | SWF domain status and retention period |
+| `ace_get_ses_identity` | SES identity verification status |
+| `ace_describe_security_group` | EC2 security group inbound and outbound rules |
+| `ace_list_dns_records` | Route 53 record sets in a hosted zone, filterable by type |
+| `ace_get_resolver_endpoint` | Route 53 Resolver endpoint details and IP count |
+| `ace_describe_kinesis_stream` | Kinesis stream status, shard count, and retention |
+| `ace_describe_firehose_stream` | Firehose delivery stream destinations and encryption |
+| `ace_describe_dynamo_stream` | DynamoDB Stream view type, status, and shards |
+| `ace_describe_kms_key` | KMS key state, usage, spec, and rotation status |
+| `ace_describe_secret` | Secrets Manager secret rotation config and tags |
+| `ace_describe_parameters` | SSM Parameter Store parameters by path prefix or type |
+| `ace_get_public_access_block` | S3 account-level public access block configuration |
+| `ace_get_metric_statistics` | CloudWatch metric statistics over a time window |
+| `ace_get_s3_object_content` | S3 GetObject with 256 KB cap and UTF-8 decoding |
+| `ace_filter_log_events` | CloudWatch Logs FilterLogEvents with pattern matching |
+| `ace_get_stack_events` | CloudFormation stack event history with optional FAILED filter |
+| `ace_get_lambda_metrics` | Lambda invocations, errors, throttles, and duration summary |
+
+### Score tools — harness only (2)
 
 | Tool | Description |
 |------|-------------|
 | `ace_verify_fix` | Trigger verify loop (requires `HARNESS_API_KEY`) |
 | `ace_score_run` | Score a completed run (requires `HARNESS_API_KEY`) |
 
-Score tools return `{"error": "unauthorized"}` without a valid key — they are never exposed to the model being evaluated.
+Score tools return `{"error": "unauthorized"}` without a valid key — they are filtered from the model's tool list by the inline agent.
 
 ---
 

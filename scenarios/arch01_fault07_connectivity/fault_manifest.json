@@ -3,6 +3,7 @@
   "fault_class": "connectivity",
   "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
   "scenario_id": "arch01_fault07_connectivity",
+  "baseline_idempotent": false,
   "target_resource": "FrontQueueMapping",
   "target_property": "Properties.FilterCriteria",
   "injected_value": "{\"body\":{\"friend_action\":[\"Accept\",\"Reject\",\"Unfriend\"]}}",

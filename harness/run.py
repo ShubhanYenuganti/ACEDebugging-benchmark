@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import traceback
 import uuid
@@ -18,6 +19,7 @@ from harness.runner.context_builder import build_context
 from harness.runner.scenario_runner import ScenarioRunner
 from harness.scoring.scorer import score_run
 from harness.scoring.agent import SCORING_MODEL
+from harness.shared.types import AssertionRunResult
 from harness.verify.pass1_functional import run_pass1
 from harness.verify.verify_loop import run_verify_loop
 
@@ -337,7 +339,17 @@ def main() -> None:
 
     # Write faulted_baseline.json — Pass 2 regression check uses this to find assertions
     # that were passing on the faulted deployment but fail after the model's fix.
-    _baseline = run_pass1(corpus_dir)
+    # Skip the baseline run entirely when the fault breaks the pipeline so badly that
+    # the functional test cannot converge (connectivity/reliability/data_correctness),
+    # signaled via baseline_idempotent: false in fault_manifest.json. Otherwise the
+    # subprocess burns its full 120s timeout polling a system that will never propagate.
+    if not _manifest_data.get("baseline_idempotent", True):
+        _baseline = AssertionRunResult(crash_reason="skipped_non_idempotent")
+    else:
+        try:
+            _baseline = run_pass1(corpus_dir)
+        except subprocess.TimeoutExpired:
+            _baseline = AssertionRunResult(crash_reason="baseline_timeout")
     _baseline_path = os.path.join("results", run_id, "faulted_baseline.json")
     with open(_baseline_path, "w") as _f:
         json.dump(_baseline.to_baseline_dict(), _f, indent=2)

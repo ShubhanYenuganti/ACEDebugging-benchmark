@@ -3,33 +3,40 @@
   "fault_class": "connectivity",
   "architecture": "arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
   "scenario_id": "arch12_fault03_connectivity",
+  "baseline_idempotent": false,
   "target_resource": "QueueEventSourceMapping",
   "target_property": "Properties.FilterCriteria",
-  "injected_value": {"Filters": [{"Pattern": "{\"body\":{\"warehouse\":[\"A\"]}}"}]},
+  "injected_value": {
+    "Filters": [
+      {
+        "Pattern": "{\"body\":{\"warehouse\":[\"A\"]}}"
+      }
+    ]
+  },
   "original_value": null,
   "valid_fixes": [
     "Remove the FilterCriteria property from QueueEventSourceMapping entirely so all messages are delivered to the consumer without filtering",
     "Restore BatchSize from 1 to 10 alongside removing FilterCriteria to match the known-good configuration"
   ],
   "invalid_patches": [
-    "Modify the FilterCriteria pattern to match 'location' field instead of 'warehouse' — adapts the filter to one field but leaves the incorrect filter mechanism in place",
-    "Modify the CSV parser handler to include a 'warehouse' key in each message body — forces the producer to satisfy a filter that should not exist"
+    "Modify the FilterCriteria pattern to match 'location' field instead of 'warehouse' \u2014 adapts the filter to one field but leaves the incorrect filter mechanism in place",
+    "Modify the CSV parser handler to include a 'warehouse' key in each message body \u2014 forces the producer to satisfy a filter that should not exist"
   ],
   "optimal_tool_calls": 5,
   "optimal_files_changed": 1,
   "optimal_lines_changed": 5,
   "optimal_diagnostic_path": [
-    "ace_check_queue_depth(queue=InventoryUpdatesQueue) → visible=2, in_flight=0 — messages present but consumer never invoked",
-    "ace_check_event_source(function=SQSToDynamoDBFunction) → state=Enabled, batch_size=1 — mapping enabled but unusual batch size flag",
-    "ace_get_log_tail(function=SQSToDynamoDBFunction) → zero invocations despite messages present — implies filter rejecting all messages",
-    "ace_describe_resource(resource=QueueEventSourceMapping) → FilterCriteria requires body.warehouse=A; CSV messages use 'location' not 'warehouse'",
-    "ace_check_queue_depth(queue=InventoryUpdatesDlq) → DLQ accumulating messages — confirms messages received and rejected, not silently lost"
+    "ace_check_queue_depth(queue=InventoryUpdatesQueue) \u2192 visible=2, in_flight=0 \u2014 messages present but consumer never invoked",
+    "ace_check_event_source(function=SQSToDynamoDBFunction) \u2192 state=Enabled, batch_size=1 \u2014 mapping enabled but unusual batch size flag",
+    "ace_get_log_tail(function=SQSToDynamoDBFunction) \u2192 zero invocations despite messages present \u2014 implies filter rejecting all messages",
+    "ace_describe_resource(resource=QueueEventSourceMapping) \u2192 FilterCriteria requires body.warehouse=A; CSV messages use 'location' not 'warehouse'",
+    "ace_check_queue_depth(queue=InventoryUpdatesDlq) \u2192 DLQ accumulating messages \u2014 confirms messages received and rejected, not silently lost"
   ],
   "concurrency_probe_n": null,
   "deployment_check": "CREATE_COMPLETE",
   "observability_check": "functional_test assertions 'inventory_records_written' and 'queue_drained_terminal_state' fail",
   "observable_symptom": "The file parser runs and messages appear in the work queue. The consumer function is never invoked despite the queue-to-function binding appearing enabled. After several minutes the messages disappear from the main queue and accumulate in the dead-letter queue. No records are written to the database.",
-  "root_cause": "QueueEventSourceMapping has a FilterCriteria requiring the message body to contain a key named 'warehouse' with value 'A'. The CSV parser produces messages using keys from the CSV header row (product_id, location, quantity, update_date) — none of which is 'warehouse'. Every message fails the filter and is never delivered to the consumer. BatchSize is also reduced to 1 so each message is evaluated individually and fails the filter independently. After 5 failed receive attempts (maxReceiveCount), messages move to the DLQ.",
+  "root_cause": "QueueEventSourceMapping has a FilterCriteria requiring the message body to contain a key named 'warehouse' with value 'A'. The CSV parser produces messages using keys from the CSV header row (product_id, location, quantity, update_date) \u2014 none of which is 'warehouse'. Every message fails the filter and is never delivered to the consumer. BatchSize is also reduced to 1 so each message is evaluated individually and fails the filter independently. After 5 failed receive attempts (maxReceiveCount), messages move to the DLQ.",
   "corpus_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3",
   "functional_test_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/functional_test.py",
   "known_good_path": "corpus/arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/known_good.yaml"

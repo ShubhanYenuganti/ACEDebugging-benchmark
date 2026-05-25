@@ -16,8 +16,8 @@ def lambda_handler(event, context):
         response = s3.get_object(Bucket=bucket, Key=key)
         csv_content = response["Body"].read().decode("utf-8-sig")
         batch = []
-        for row in csv.DictReader(csv_content.splitlines()):
-            batch.append({"Id": str(len(batch) + 1), "MessageBody": json.dumps(row)})
+        for index, row in enumerate(csv.DictReader(csv_content.splitlines()), start=1):
+            batch.append({"Id": str(index), "MessageBody": json.dumps(row)})
             if len(batch) == 10:
                 sqs.send_message_batch(QueueUrl=os.environ["SQS_QUEUE_URL"], Entries=batch)
                 sent += len(batch)

@@ -22,7 +22,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub '${AWS::StackName}-inventory-queue'
-      VisibilityTimeout: 10
+      VisibilityTimeout: 60
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt InventoryUpdatesDlq.Arn
         maxReceiveCount: 5

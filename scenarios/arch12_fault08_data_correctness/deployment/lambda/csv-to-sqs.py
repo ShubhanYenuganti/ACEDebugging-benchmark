@@ -17,7 +17,8 @@ def lambda_handler(event, context):
         csv_content = response["Body"].read().decode("utf-8-sig")
         batch = []
         for row in csv.DictReader(csv_content.splitlines()):
-            batch.append({"Id": str(len(batch) + 1), "MessageBody": json.dumps({"product_id": row["product_id"], "loc": row["location"], "quantity": row["quantity"], "update_date": row["update_date"]})})
+            # Correct key name to 'location' instead of 'loc'
+            batch.append({"Id": str(len(batch) + 1), "MessageBody": json.dumps({"product_id": row["product_id"], "location": row["location"], "quantity": row["quantity"], "update_date": row["update_date"]})})
             if len(batch) == 10:
                 sqs.send_message_batch(QueueUrl=os.environ["SQS_QUEUE_URL"], Entries=batch)
                 sent += len(batch)
