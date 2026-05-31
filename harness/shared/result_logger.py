@@ -13,6 +13,9 @@ def init_run(run_id: str, scenario_id: str) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "scenario_id.txt").write_text(scenario_id)
     (run_dir / "tool_call_trace.json").write_text("[]")
+    # Edit trace is kept separate from tool_call_trace.json: file edits are NOT
+    # MCP diagnostic calls and must not pollute the efficiency tool-call count.
+    (run_dir / "edit_trace.json").write_text("[]")
 
 
 def log_tool_call(
@@ -35,6 +38,34 @@ def log_tool_call(
         data = json.loads(path.read_text())
         data.append(entry)
         path.write_text(json.dumps(data, indent=2))
+
+
+def log_edit_event(run_id: str, turn: int, action: str, path: str = "") -> None:
+    """Append one file-edit event (write_file / submit_fix) to edit_trace.json.
+
+    This is the fix-attempt record the identification scorer reads to establish
+    the "before the first fix" boundary. It is intentionally separate from
+    tool_call_trace.json, which records MCP diagnostic invocations only.
+    """
+    path_file = Path(RESULTS_DIR) / run_id / "edit_trace.json"
+    path_file.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"turn": turn, "action": action, "path": path}
+    with _trace_lock:
+        existing: list = []
+        if path_file.is_file():
+            try:
+                existing = json.loads(path_file.read_text())
+            except (json.JSONDecodeError, OSError):
+                existing = []
+        existing.append(entry)
+        path_file.write_text(json.dumps(existing, indent=2))
+
+
+def log_submission_attempts(run_id: str, attempts: int) -> None:
+    """Record how many submission attempts the run took, for the retry penalty."""
+    path = Path(RESULTS_DIR) / run_id / "submission_attempts.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"attempts": attempts}, indent=2))
 
 
 def log_text_mode_failure(run_id: str, turn: int, raw: str, error: str) -> None:

@@ -3,13 +3,18 @@ from harness.scoring.agent import call_scoring_agent, SYSTEM_PROMPT
 
 
 def check_gate(verify_result: dict) -> bool:
+    """Quality gate: did the run actually address the fault?
+
+    The gate guards two things only — a valid fix classification and passing
+    primary assertions. Regressions are NOT a gate condition: they are penalised
+    gradually in the composite via the regression dimension (see scorer.py), so a
+    fix that works but introduces a regression earns a reduced — not zero — score.
+    """
     p1 = verify_result["pass1_functional"]
-    p2 = verify_result["pass2_regression"]
     p3 = verify_result["pass3_classification"]
     classification_ok = p3["classification"] in ("root_cause", "workaround")
     assertions_ok = p1["primary_assertions_passed"]
-    no_regressions = p2["regression_count"] == 0
-    return classification_ok and assertions_ok and no_regressions
+    return classification_ok and assertions_ok
 
 
 def score(

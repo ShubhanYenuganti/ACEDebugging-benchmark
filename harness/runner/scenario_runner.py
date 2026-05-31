@@ -161,11 +161,16 @@ class ScenarioRunner:
         )
         self.submission_state.deploy_attempts += 1
         self.submission_state.last_outcome = result.outcome
-        if is_initial and result.success:
-            with self._lock:
-                if self.submission_state.initial_deployment_outcome == "unknown":
-                    self.submission_state.initial_deployment_outcome = result.outcome
-                self.submission_state.submitted = True
+        if result.success:
+            if is_initial:
+                with self._lock:
+                    if self.submission_state.initial_deployment_outcome == "unknown":
+                        self.submission_state.initial_deployment_outcome = result.outcome
+                    self.submission_state.submitted = True
+            # Re-snapshot on EVERY successful deploy (initial or retry) so Pass 3
+            # scores the template that is actually live, not a stale first attempt.
+            # The agent may correct its fix across test-retry cycles; the scored
+            # structural diff must follow the final deployed state. (Fix #1A)
             self._write_submitted_yaml()
         return result
 

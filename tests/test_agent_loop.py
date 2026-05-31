@@ -797,7 +797,7 @@ def test_non_verbose_no_reasoning_printed(tmp_path, capsys):
 
 
 def test_verbose_prints_write_file_preview(tmp_path, capsys):
-    """First 30 lines of write_file content printed in verbose mode."""
+    """First 10 changed lines of write_file content printed in verbose mode."""
     (tmp_path / "deployment").mkdir()
     from harness.agent.loop import run_agent_loop
 
@@ -836,12 +836,12 @@ def test_verbose_prints_write_file_preview(tmp_path, capsys):
         ))
 
     captured = capsys.readouterr()
-    assert "[edit →" in captured.out
+    assert "[write_file →" in captured.out
     assert "deployment/handler.py" in captured.out
     assert "line 1" in captured.out
-    assert "line 30" in captured.out
-    assert "line 31" not in captured.out
-    assert "10 more changes" in captured.out
+    assert "line 10" in captured.out
+    assert "line 11" not in captured.out
+    assert "30 more changes" in captured.out
 
 
 def test_verbose_write_file_preview_short_file(tmp_path, capsys):
@@ -1176,3 +1176,64 @@ def test_write_file_no_orphan_check_outside_lambda_subdir(tmp_path):
         str(tmp_path),
     )
     assert result.startswith("Written ")
+
+
+# ── Fix #2: edit trace logging (separate from the diagnostic tool trace) ──────
+
+def test_log_edit_event_appends(tmp_path, monkeypatch):
+    """log_edit_event records write/submit events to edit_trace.json, keeping the
+    diagnostic tool_call_trace.json (MCP calls only) untouched."""
+    from harness.shared import result_logger
+    monkeypatch.setattr(result_logger, "RESULTS_DIR", str(tmp_path))
+
+    result_logger.init_run("rid", "scenario-x")
+    result_logger.log_edit_event("rid", turn=3, action="write_file", path="faulted.yaml")
+    result_logger.log_edit_event("rid", turn=4, action="submit_fix", path="")
+
+    data = json.loads((tmp_path / "rid" / "edit_trace.json").read_text())
+    assert data == [
+        {"turn": 3, "action": "write_file", "path": "faulted.yaml"},
+        {"turn": 4, "action": "submit_fix", "path": ""},
+    ]
+    # The diagnostic trace must remain empty — edits are not MCP tool calls.
+    assert json.loads((tmp_path / "rid" / "tool_call_trace.json").read_text()) == []
+
+
+def test_write_file_logs_edit_event(tmp_path):
+    """A successful write_file in the agent loop is recorded via log_edit_event."""
+    from harness.agent.loop import run_agent_loop
+    (tmp_path / "deployment").mkdir()
+
+    def _resp_factory():
+        yield _make_litellm_response(
+            "tool_calls",
+            tool_calls=[_make_tool_call("tc0", "write_file",
+                                        {"path": "deployment/handler.py", "content": "# fix"})],
+        )
+        while True:
+            yield _make_litellm_response("stop")
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=_resp_factory()), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx, \
+         patch("harness.agent.loop.result_logger.log_tool_call"), \
+         patch("harness.agent.loop.result_logger.log_edit_event") as mock_edit:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="anthropic/claude-sonnet-4-6",
+            api_key="key",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="t-edit",
+            harness_api_key="hk",
+            max_turns=5,
+        ))
+
+    assert mock_edit.call_count >= 1
+    actions = [c.kwargs.get("action") for c in mock_edit.call_args_list]
+    assert "write_file" in actions

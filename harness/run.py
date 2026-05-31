@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from harness.agent.loop import run_agent_loop
 from harness.shared.localstack_client import health_check
-from harness.shared.result_logger import log_verify_result
+from harness.shared.result_logger import log_submission_attempts, log_verify_result
 from harness.runner.context_builder import build_context
 from harness.runner.scenario_runner import ScenarioRunner
 from harness.scoring.scorer import score_run
@@ -182,6 +182,7 @@ def _print_score_summary(score: dict) -> None:
     d3 = dims.get("regression_penalty", {})
     d4 = dims.get("efficiency", {})
     d5 = dims.get("quality", {})
+    d6 = dims.get("retry_penalty", {})
 
     print(banner)
     print(f"Quality gate:     {'PASS' if score.get('quality_threshold_met') else 'FAIL → score zeroed'}")
@@ -190,6 +191,7 @@ def _print_score_summary(score: dict) -> None:
     print(f"Regression:      -{d3.get('penalty', 0):.2f}  {d3.get('rationale', '')}")
     print(f"Efficiency:       {d4.get('score', 0):.2f}  {d4.get('rationale', '')}")
     print(f"Quality:          {d5.get('score', 0):.2f}  {d5.get('rationale', '')}")
+    print(f"Retry:           -{d6.get('penalty', 0):.2f}  {d6.get('rationale', '')}")
     print("────────────────────────────────────────")
     print(f"Final score:      {score.get('final_score', 0.0):.4f}")
     print(f"Interpretation:   {score.get('interpretation', '')}")
@@ -400,6 +402,10 @@ def main() -> None:
             print(f"ERROR: Agent crashed: {exc}", file=sys.stderr)
             traceback.print_exc()
             sys.exit(1)
+
+        # Record submission attempts for the retry penalty (earlier success scores
+        # higher). deploy_attempts counts every submit_fix that reached deployment.
+        log_submission_attempts(run_id, runner.submission_state.deploy_attempts)
 
     # Step 8 — resolve scored deployment outcome (frozen at first success).
     _scored_outcome = _resolve_deployment_outcome(runner)

@@ -449,6 +449,13 @@ async def run_agent_loop(
                             if name == "write_file" and content.startswith("Written "):
                                 writes_made += 1
                                 writes_since_last_submit += 1
+                                try:
+                                    result_logger.log_edit_event(
+                                        run_id, turn=turn, action="write_file",
+                                        path=args.get("path", ""),
+                                    )
+                                except OSError:
+                                    pass
                                 new_content = args.get("content", "")
                                 file_path = args.get("path", "?")
                                 before_lines = _old_content.splitlines() if _old_content else []
@@ -489,6 +496,12 @@ async def run_agent_loop(
                     )
 
                 if name == "submit_fix":
+                    try:
+                        result_logger.log_edit_event(
+                            run_id, turn=turn, action="submit_fix", path="",
+                        )
+                    except OSError:
+                        pass
                     print(f"\n[submit_fix]\n{content}\n", flush=True)
 
                 tool_results.append({

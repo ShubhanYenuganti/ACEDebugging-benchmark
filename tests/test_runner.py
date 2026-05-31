@@ -519,6 +519,35 @@ def test_deploy_retry_does_not_check_submitted(tmp_path, mocker):
     assert runner.submission_state.deploy_attempts == 1
 
 
+def test_deploy_retry_snapshots_submitted_on_success(tmp_path, mocker):
+    """Fix #1A: every successful (re)deploy re-snapshots submitted.yaml so Pass 3
+    scores the template that is actually live, not a stale first attempt."""
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-snap-1")
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value=DeploymentResult(outcome="deploy_success"),
+    )
+    spy = mocker.patch.object(runner, "_write_submitted_yaml")
+    runner.deploy(is_initial=False)
+    spy.assert_called_once()
+
+
+def test_deploy_retry_no_snapshot_on_failure(tmp_path, mocker):
+    """A failed retry must NOT overwrite the last good submitted.yaml snapshot."""
+    mocker.patch("harness.runner.scenario_runner.init_run")
+    mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})
+    runner = ScenarioRunner(str(tmp_path), "run-snap-2")
+    mocker.patch(
+        "harness.runner.scenario_runner.handle_submission",
+        return_value=DeploymentResult(outcome="deploy_fail", error="boom"),
+    )
+    spy = mocker.patch.object(runner, "_write_submitted_yaml")
+    runner.deploy(is_initial=False)
+    spy.assert_not_called()
+
+
 def test_deploy_increments_attempt_counter(tmp_path, mocker):
     mocker.patch("harness.runner.scenario_runner.init_run")
     mocker.patch("harness.runner.scenario_runner.snapshot", return_value={})

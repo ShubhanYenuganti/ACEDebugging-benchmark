@@ -64,13 +64,11 @@ SAMPLE_VERIFY = {
 }
 
 TRACE_WITH_TARGET = [
-    {"turn": 1, "tool": "ace_get_event_source", "input": {"function_name": "ace-bench-processor"}, "output": "{}"},
-    {"turn": 2, "tool": "ace_update_template", "input": {}, "output": "{}"},
+    {"turn": 1, "tool": "ace_check_event_source", "input": {"function_name": "ace-bench-processor"}, "output": "{}"},
 ]
 
 TRACE_WITHOUT_TARGET = [
     {"turn": 1, "tool": "ace_invoke_endpoint", "input": {}, "output": "{}"},
-    {"turn": 2, "tool": "ace_update_template", "input": {}, "output": "{}"},
 ]
 
 KNOWN_GOOD_YAML = "Resources:\n  ProcessorLambdaESM:\n    Type: AWS::Lambda::EventSourceMapping"
@@ -277,10 +275,17 @@ def test_check_gate_fails_primary_not_passed():
     assert check_gate(v) is False
 
 
-def test_check_gate_fails_with_regression():
+def test_check_gate_passes_with_regression():
+    """Regressions no longer hard-zero a run; they are penalised gradually in
+    the composite via the regression dimension. The gate only guards that the
+    fault was actually addressed (classification + primary assertions)."""
     from harness.scoring.dimensions.quality import check_gate
     v = _make_verify_for_gate("root_cause", True, 1)
-    assert check_gate(v) is False
+    assert check_gate(v) is True
+
+    # A workaround with a regression still passes the gate (penalised later).
+    v2 = _make_verify_for_gate("workaround", True, 2)
+    assert check_gate(v2) is True
 
 
 def test_quality_score_parses_agent_response():
@@ -389,3 +394,124 @@ def test_scorer_zero_on_did_not_deploy(mock_q, mock_e, mock_id, tmp_path):
     mock_id.assert_not_called()
     assert result["final_score"] == 0.0
     assert result["zero_reason"] == "did_not_deploy"
+
+
+# ── Fix #1B: retry penalty — earlier success scores higher ───────────────────
+
+def test_retry_penalty_schedule():
+    from harness.scoring.dimensions.retry import compute
+
+    assert compute(1)["penalty"] == 0.0
+    assert compute(2)["penalty"] == 0.05
+    assert compute(3)["penalty"] == 0.10
+    assert compute(4)["penalty"] == 0.15
+    assert compute(5)["penalty"] == 0.20
+    assert compute(9)["penalty"] == 0.20  # capped
+    assert compute(0)["penalty"] == 0.0   # defensive: never negative
+    assert isinstance(compute(3)["rationale"], str) and compute(3)["rationale"]
+
+
+@patch("harness.scoring.dimensions.identification.call_scoring_agent")
+@patch("harness.scoring.dimensions.efficiency.call_scoring_agent")
+@patch("harness.scoring.dimensions.quality.call_scoring_agent")
+def test_scorer_applies_retry_penalty(mock_q, mock_e, mock_id, tmp_path):
+    """A run that only succeeded on the 3rd submission is penalised 0.10 vs an
+    otherwise identical first-try run."""
+    mock_id.return_value = '{"score": 1.0, "rationale": "identified"}'
+    mock_e.return_value = '{"rationale": "efficient"}'
+    mock_q.return_value = '{"score": 1.0, "classification": "root_cause", "rationale": "clean"}'
+
+    scenario_id = "arch01_fault01_order_processing"
+    arch_id = "arch_01_order_processing"
+    run_id = "test-run-retry"
+
+    manifest = dict(SAMPLE_MANIFEST)
+    manifest["optimal_tool_calls"] = len(SAMPLE_TRACE)
+    manifest["optimal_files_changed"] = SAMPLE_FILE_LOG["total_files_changed"]
+    manifest["optimal_lines_changed"] = SAMPLE_FILE_LOG["total_lines_changed"]
+
+    run_dir = _make_run_dir(tmp_path, run_id, scenario_id, SAMPLE_VERIFY, SAMPLE_TRACE, SAMPLE_FILE_LOG)
+    (run_dir / "submission_attempts.json").write_text(json.dumps({"attempts": 3}))
+    _make_scenario_dir(tmp_path, scenario_id, manifest, "faulted: yaml")
+    _make_corpus_dir(tmp_path, arch_id, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+
+    from harness.scoring.scorer import score_run
+    result = score_run(run_id, str(tmp_path))
+
+    # All sub-scores 1.0 → weighted 1.0; minus retry penalty 0.10 → 0.90.
+    assert result["dimensions"]["retry_penalty"]["penalty"] == 0.10
+    assert result["dimensions"]["retry_penalty"]["attempts"] == 3
+    assert result["final_score"] == pytest.approx(0.90, abs=1e-4)
+
+
+@patch("harness.scoring.dimensions.identification.call_scoring_agent")
+@patch("harness.scoring.dimensions.efficiency.call_scoring_agent")
+@patch("harness.scoring.dimensions.quality.call_scoring_agent")
+def test_scorer_regression_penalty_not_zeroed(mock_q, mock_e, mock_id, tmp_path):
+    """Fix #3: a regression no longer zeroes the score; it applies a graduated
+    penalty instead."""
+    mock_id.return_value = '{"score": 1.0, "rationale": "identified"}'
+    mock_e.return_value = '{"rationale": "efficient"}'
+    mock_q.return_value = '{"score": 1.0, "classification": "root_cause", "rationale": "clean"}'
+
+    scenario_id = "arch01_fault01_order_processing"
+    arch_id = "arch_01_order_processing"
+    run_id = "test-run-reg"
+
+    manifest = dict(SAMPLE_MANIFEST)
+    manifest["optimal_tool_calls"] = len(SAMPLE_TRACE)
+    manifest["optimal_files_changed"] = SAMPLE_FILE_LOG["total_files_changed"]
+    manifest["optimal_lines_changed"] = SAMPLE_FILE_LOG["total_lines_changed"]
+
+    # primary passes, one secondary regression → all_assertions_passed False.
+    verify = _make_verify(False, True, ["x_secondary"], 2, crit_reg=0, noncrit_reg=1)
+
+    _make_run_dir(tmp_path, run_id, scenario_id, verify, SAMPLE_TRACE, SAMPLE_FILE_LOG)
+    _make_scenario_dir(tmp_path, scenario_id, manifest, "faulted: yaml")
+    _make_corpus_dir(tmp_path, arch_id, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+
+    from harness.scoring.scorer import score_run
+    result = score_run(run_id, str(tmp_path))
+
+    assert result["zero_reason"] is None
+    assert result["quality_threshold_met"] is True
+    # weighted = 0.20*1 (id) + 0.25*0.6 (fix: primary only) + 0.15*1 (eff) + 0.40*1 (qual) = 0.90
+    # composite = 0.90 - 0.08 (one non-critical regression) = 0.82
+    assert result["dimensions"]["regression_penalty"]["penalty"] == 0.08
+    assert result["final_score"] == pytest.approx(0.82, abs=1e-4)
+
+
+# ── Fix #2: identification scores against the real edit trace ────────────────
+
+def test_identification_surfaces_fix_boundary_from_edit_trace():
+    """The first write_file event defines the fix-attempt boundary, and the
+    prompt no longer references nonexistent ace_update_template/ace_apply_patch
+    write tools."""
+    with patch("harness.scoring.dimensions.identification.call_scoring_agent") as mock_agent:
+        mock_agent.return_value = '{"score": 1.0, "rationale": "ok"}'
+        from harness.scoring.dimensions.identification import score
+
+        edit_trace = [
+            {"turn": 5, "action": "write_file", "path": "faulted.yaml"},
+            {"turn": 6, "action": "submit_fix", "path": ""},
+        ]
+        diag_trace = [
+            {"turn": 1, "tool": "ace_get_iam_role", "input": {"role_name": "StreamHandlerRole"}, "output": "{}"},
+        ]
+        score(diag_trace, SAMPLE_MANIFEST, SAMPLE_VERIFY, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD, edit_trace=edit_trace)
+        prompt = mock_agent.call_args[0][1]
+
+    assert "write_file" in prompt
+    assert "5" in prompt  # boundary turn surfaced
+    assert "ace_update_template" not in prompt
+    assert "ace_apply_patch" not in prompt
+
+
+def test_identification_handles_missing_edit_trace():
+    """Back-compat: callers that pass no edit_trace still get a valid score and
+    a prompt that flags the absence of any recorded fix attempt."""
+    with patch("harness.scoring.dimensions.identification.call_scoring_agent") as mock_agent:
+        mock_agent.return_value = '{"score": 0.0, "rationale": "blind"}'
+        from harness.scoring.dimensions.identification import score
+        r = score(TRACE_WITHOUT_TARGET, SAMPLE_MANIFEST, SAMPLE_VERIFY, KNOWN_GOOD_YAML, TRAFFIC_FLOW_MD)
+    assert r["score"] == 0.0

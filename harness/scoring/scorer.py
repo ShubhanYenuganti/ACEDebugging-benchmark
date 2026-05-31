@@ -9,6 +9,7 @@ from harness.scoring.dimensions import (
     regression,
     efficiency,
     quality,
+    retry,
 )
 
 
@@ -75,6 +76,14 @@ def score_run(run_id: str, base_dir: str) -> dict:
     verify_result = _load_json(run_dir / "verify_result.json")
     tool_trace = _load_json(run_dir / "tool_call_trace.json")
     file_log = _load_json(run_dir / "file_change_log.json")
+    edit_trace = (
+        _load_json(run_dir / "edit_trace.json")
+        if (run_dir / "edit_trace.json").exists() else []
+    )
+    submission_attempts = (
+        _load_json(run_dir / "submission_attempts.json").get("attempts", 1)
+        if (run_dir / "submission_attempts.json").exists() else 1
+    )
     manifest = _load_json(scenario_dir / "fault_manifest.json")
     known_good = _load_text(corpus_dir / "known_good.yaml")
     traffic_flow = _load_text(corpus_dir / "traffic_flow.md")
@@ -85,15 +94,16 @@ def score_run(run_id: str, base_dir: str) -> dict:
     if not gate.check_quality_gate(verify_result):
         return _write_zero(run_dir, run_id, scenario_id, "quality_gate_failed", quality_gate_met=False)
 
-    d1 = identification.score(tool_trace, manifest, verify_result, known_good, traffic_flow)
+    d1 = identification.score(tool_trace, manifest, verify_result, known_good, traffic_flow, edit_trace=edit_trace)
     d2 = fix_correctness.score(verify_result)
     d3 = regression.compute(verify_result)
     d4 = efficiency.score(tool_trace, file_log, manifest, known_good, traffic_flow)
     d5 = quality.score(verify_result, manifest, file_log, known_good, traffic_flow)
+    d6 = retry.compute(submission_attempts)
 
     weighted = (d1["score"] * 0.20) + (d2["score"] * 0.25) \
         + (d4["score"] * 0.15) + (d5["score"] * 0.40)
-    composite = max(0.0, round(weighted - d3["penalty"], 4))
+    composite = max(0.0, round(weighted - d3["penalty"] - d6["penalty"], 4))
 
     def interpret(s: float) -> str:
         if s >= 0.90:
@@ -118,6 +128,7 @@ def score_run(run_id: str, base_dir: str) -> dict:
             "regression_penalty": d3,
             "efficiency": d4,
             "quality": d5,
+            "retry_penalty": d6,
         },
         "weighted": round(weighted, 4),
         "composite": composite,
