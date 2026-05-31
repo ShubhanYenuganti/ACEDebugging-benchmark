@@ -297,6 +297,12 @@ def main() -> None:
         action="store_true",
         help="Print the model's reasoning text and each tool call as it executes.",
     )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=50,
+        help="Maximum inline-agent turns before the run stops (default: 50).",
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -379,7 +385,11 @@ def main() -> None:
             print("ERROR: HARNESS_API_KEY env var is required when --model is used", file=sys.stderr)
             sys.exit(1)
 
+        agent_manifest_hidden = manifest_path + ".hidden"
+        agent_manifest_was_present = os.path.isfile(manifest_path)
         try:
+            if agent_manifest_was_present:
+                os.rename(manifest_path, agent_manifest_hidden)
             asyncio.run(
                 run_agent_loop(
                     model=_model,
@@ -395,6 +405,7 @@ def main() -> None:
                     redeploy_callback=lambda: runner.deploy(is_initial=False),
                     verify_callback=runner.run_functional_tests,
                     max_test_retries=5,
+                    max_turns=args.max_turns,
                 )
             )
         except BaseException as exc:
@@ -402,6 +413,9 @@ def main() -> None:
             print(f"ERROR: Agent crashed: {exc}", file=sys.stderr)
             traceback.print_exc()
             sys.exit(1)
+        finally:
+            if agent_manifest_was_present and os.path.isfile(agent_manifest_hidden):
+                os.rename(agent_manifest_hidden, manifest_path)
 
         # Record submission attempts for the retry penalty (earlier success scores
         # higher). deploy_attempts counts every submit_fix that reached deployment.
@@ -422,7 +436,7 @@ def main() -> None:
 
     # Step 10 — autonomous scoring
     base_dir = os.path.dirname(os.path.dirname(scenario_dir))
-    print("[scorer] Running scoring agent (Claude Sonnet)...")
+    print(f"[scorer] Running scoring agent ({SCORING_MODEL})...")
     score_result = score_run(run_id, base_dir)
 
     # Step 11 — print human-readable summary (stdout may be closed if piped to stub)

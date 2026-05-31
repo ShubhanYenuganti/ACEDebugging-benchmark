@@ -343,7 +343,8 @@ def test_handle_submission_reports_skipped_lambda_files(tmp_path, mocker):
     lam = scenario / "deployment" / "lambda"
     lam.mkdir()
     (lam / "handler.py").write_text("def handler(e,c): return 200\n")
-    # Agent also wrote a NEW file whose stem (typo_handler) does not match any S3Key.
+    # Agent also wrote a NEW sibling file. Flat Lambda packaging now includes
+    # sibling helpers with the known handler source instead of skipping them.
     (lam / "typo_handler.py").write_text("def handler(e,c): return 500\n")
 
     mocker.patch(
@@ -371,8 +372,8 @@ def test_handle_submission_reports_skipped_lambda_files(tmp_path, mocker):
 
     result = handle_submission(str(scenario), "run-skip", {})
     assert result.outcome == "deploy_success"
-    assert "lambda/typo_handler.py" in result.skipped_lambda_files
-    assert "lambda/handler.py" not in result.skipped_lambda_files
+    assert result.skipped_lambda_files == []
+    assert result.packaged_files == ["lambda"]
 
 
 def test_run_functional_tests_nonzero_exit_is_failure(tmp_path, mocker):
@@ -647,6 +648,42 @@ def test_build_packaging_plan_uses_dir_source(tmp_path):
     assert plan.uploads[0].is_dir is True
     assert plan.uploads[0].stem == "handler"
     assert plan.uploads[0].source_path == str(d)
+
+
+def test_build_packaging_plan_packages_flat_helper_sibling(tmp_path):
+    import io as _io
+    import textwrap
+    import zipfile as _zf
+    from harness.runner.deployment_handler import _build_packaging_plan, _zip_dir
+
+    template = tmp_path / "faulted.yaml"
+    template.write_text(textwrap.dedent("""
+        Resources:
+          Fn:
+            Type: AWS::Lambda::Function
+            Properties:
+              Handler: handler.lambda_handler
+              Code:
+                S3Key: handler.zip
+    """))
+    d = tmp_path / "lambda"
+    d.mkdir()
+    (d / "handler.py").write_text("# main")
+    (d / "utils.py").write_text("# helper")
+    diff = {
+        "files_modified": [],
+        "files_added": [os.path.join("lambda", "utils.py")],
+        "per_file_line_changes": {},
+    }
+    plan = _build_packaging_plan(diff, str(template), str(tmp_path), "run-helper")
+
+    assert len(plan.uploads) == 1
+    assert plan.uploads[0].stem == "handler"
+    assert plan.uploads[0].is_dir is True
+    assert plan.uploads[0].source_path == str(d)
+    with _zf.ZipFile(_io.BytesIO(_zip_dir(plan.uploads[0].source_path))) as archive:
+        assert "handler.py" in archive.namelist()
+        assert "utils.py" in archive.namelist()
 
 
 def test_build_packaging_plan_stem_collision_raises(tmp_path):

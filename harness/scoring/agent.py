@@ -2,7 +2,7 @@ import os
 
 import litellm
 
-SCORING_MODEL = os.environ.get("ACE_SCORING_MODEL", "gpt-4o")
+SCORING_MODEL = os.environ.get("ACE_SCORING_MODEL", "gpt-4o-2024-08-06")
 
 SYSTEM_PROMPT = """You are an infrastructure debugging benchmark scorer.
 You evaluate AI model runs against a known-good AWS architecture.
@@ -22,6 +22,7 @@ Rationale is exactly 1-2 sentences. Do not reference information not given in th
 def call_scoring_agent(system_prompt: str, user_prompt: str) -> str:
     response = litellm.completion(
         model=SCORING_MODEL,
+        temperature=0,
         max_tokens=1024,
         messages=[
             {"role": "system", "content": system_prompt},

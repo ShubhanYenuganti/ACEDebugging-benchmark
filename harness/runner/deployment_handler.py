@@ -122,6 +122,19 @@ def _path_to_package_stem(rel_path: str, known_stems: set[str]) -> str | None:
     return None
 
 
+def _sibling_package_stems(rel_path: str, deployment_dir: str, known_stems: set[str]) -> list[str]:
+    """Return known package stems that live beside an otherwise unknown .py file."""
+    norm = rel_path.replace("\\", "/")
+    if not norm.endswith(".py"):
+        return []
+    abs_dir = os.path.dirname(os.path.join(deployment_dir, norm))
+    matches = []
+    for stem in known_stems:
+        if os.path.isdir(os.path.join(abs_dir, stem)) or os.path.isfile(os.path.join(abs_dir, f"{stem}.py")):
+            matches.append(stem)
+    return sorted(matches)
+
+
 def _build_packaging_plan(diff: dict, template_path: str, deployment_dir: str, run_id: str) -> PackagingPlan:
     """Compute what to upload from a deployment diff.
 
@@ -134,13 +147,19 @@ def _build_packaging_plan(diff: dict, template_path: str, deployment_dir: str, r
 
     plan = PackagingPlan()
     affected_stems: set[str] = set()
+    force_dir_stems: set[str] = set()
     for rel_path in diff["files_modified"] + diff["files_added"]:
         norm = rel_path.replace("\\", "/")
         stem = _path_to_package_stem(rel_path, known_stems)
         if stem:
             affected_stems.add(stem)
         elif norm.endswith(".py"):
-            plan.orphans.append(norm)
+            sibling_stems = _sibling_package_stems(norm, deployment_dir, known_stems)
+            if len(sibling_stems) == 1:
+                affected_stems.add(sibling_stems[0])
+                force_dir_stems.add(sibling_stems[0])
+            else:
+                plan.orphans.append(norm)
     seen_source_paths: set[str] = set()
 
     with open(template_path, "r", encoding="utf-8") as _f:
@@ -160,6 +179,17 @@ def _build_packaging_plan(diff: dict, template_path: str, deployment_dir: str, r
                 "which is already claimed by another stem."
             )
         seen_source_paths.add(abs_source)
+
+        if not is_dir and stem in force_dir_stems:
+            source_path = os.path.dirname(source_path)
+            is_dir = True
+            abs_source = os.path.abspath(source_path)
+            if abs_source in seen_source_paths:
+                raise ValueError(
+                    f"Stem collision: '{stem}' resolves to source '{source_path}' "
+                    "which is already claimed by another stem."
+                )
+            seen_source_paths.add(abs_source)
 
         if is_dir:
             zip_bytes = _zip_dir(source_path)

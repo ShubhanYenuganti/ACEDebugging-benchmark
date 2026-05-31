@@ -415,6 +415,47 @@ class TestPass4Concurrency:
             result = run_pass4("scenario", manifest_path, "http://localhost:4566/test")
         assert result["requests_sent"] == 10
 
+    def test_sqs_probe_runs_without_http_endpoint(self, tmp_path):
+        manifest_path = self._make_manifest(
+            tmp_path,
+            "p4-sqs",
+            {
+                "fault_class": "reliability",
+                "concurrency_probe_n": 3,
+                "concurrency_probe": {
+                    "type": "sqs",
+                    "queue_url": "http://localhost:4566/000000000000/q",
+                    "message_body": "{\"ok\": true}",
+                },
+            },
+        )
+        sent = []
+
+        def send_message(**kwargs):
+            sent.append(kwargs)
+            return {"MessageId": str(len(sent))}
+
+        with patch("harness.verify.pass4_concurrency.sqs_client") as mock_sqs:
+            mock_sqs.send_message.side_effect = send_message
+            mock_sqs.get_queue_attributes.return_value = {
+                "Attributes": {"ApproximateNumberOfMessages": "0"}
+            }
+            result = run_pass4("scenario", manifest_path, "")
+
+        assert result["probe_type"] == "sqs"
+        assert result["requests_sent"] == 3
+        assert result["success_count"] == 3
+        assert result["passed"] is True
+        assert all(call["QueueUrl"].endswith("/q") for call in sent)
+
+    def test_no_endpoint_and_no_event_probe_skips(self, tmp_path):
+        manifest_path = self._make_manifest(
+            tmp_path, "p4-skip", {"fault_class": "reliability"}
+        )
+        result = run_pass4("scenario", manifest_path, "")
+        assert result["skipped"] is True
+        assert result["reason"] == "no_concurrency_probe"
+
 
 import harness.verify.pass1_functional as p1mod
 import harness.verify.pass2_regression as p2mod

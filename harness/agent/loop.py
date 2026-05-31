@@ -206,7 +206,7 @@ async def run_agent_loop(
         test_retry_count = 0
 
         for turn in range(max_turns):
-            kwargs: dict = dict(model=model, messages=messages, tools=tools, tool_choice="required")
+            kwargs: dict = dict(model=model, messages=messages, tools=tools, tool_choice="auto")
             if api_key:
                 kwargs["api_key"] = api_key
             if base_url:

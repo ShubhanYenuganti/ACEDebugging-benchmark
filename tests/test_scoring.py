@@ -19,6 +19,7 @@ def test_call_scoring_agent_returns_text():
         from harness.scoring.agent import call_scoring_agent
         result = call_scoring_agent("sys", "user")
         assert result == '{"score": 1.0}'
+        assert mock_completion.call_args.kwargs["temperature"] == 0
 
 
 def test_call_scoring_agent_propagates_api_error():

@@ -3,6 +3,9 @@ import os
 import pathlib
 import re
 
+from harness.shared.cfn_lint_runner import run_lint
+from harness.shared.template_parser import extract_s3key_stems
+
 SIGNAL_FILE = os.environ.get("ACE_BENCH_SIGNAL_FILE", "/tmp/ace-bench-update.json")
 
 READ_MAX_BYTES = 1_048_576   # 1 MB
@@ -10,7 +13,7 @@ WRITE_MAX_BYTES = 524_288    # 512 KB
 
 _BLOCKED_READS = {"fault_manifest.json", "known_good.yaml"}
 _SUBMIT_TOOL = "submit_fix"
-_FILE_TOOL_NAMES = {"read_file", "write_file", "list_directory", "submit_fix"}
+_FILE_TOOL_NAMES = {"read_file", "write_file", "list_directory", "submit_fix", "validate_fix"}
 
 
 def mcp_to_openai_tool(mcp_tool) -> dict:
@@ -100,12 +103,35 @@ FILE_TOOL_DEFINITIONS: list[dict] = [
             "description": (
                 "Submit your fix for redeployment. "
                 "Call this once you have edited all necessary files and are ready to deploy. "
-                "Your first call is your final scored submission."
+                "Later successful retries are allowed but receive a retry penalty."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "validate_fix",
+            "description": (
+                "Run a non-deploy validation preview: cfn-lint on faulted.yaml "
+                "and a Lambda packaging source check. Does not submit or score."
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
 ]
+
+
+def _sibling_package_stems(rel_path: str, scenario_root: pathlib.Path, stems: dict) -> list[str]:
+    norm = rel_path.replace("\\", "/")
+    if not norm.startswith("deployment/") or not norm.endswith(".py"):
+        return []
+    target_dir = (scenario_root / norm).parent
+    matches = []
+    for stem in stems:
+        if (target_dir / f"{stem}.py").exists() or (target_dir / stem).is_dir():
+            matches.append(stem)
+    return sorted(matches)
 
 
 def _check_lambda_orphan(rel_path: str, scenario_root: pathlib.Path) -> str | None:
@@ -116,8 +142,6 @@ def _check_lambda_orphan(rel_path: str, scenario_root: pathlib.Path) -> str | No
     a known stem from the YAML-parsed template, enabling both flat-file and
     directory-based Lambda package layouts.
     """
-    from harness.shared.template_parser import extract_s3key_stems
-
     norm = rel_path.replace("\\", "/")
     if not norm.startswith("deployment/") or not norm.endswith(".py"):
         return None
@@ -133,6 +157,10 @@ def _check_lambda_orphan(rel_path: str, scenario_root: pathlib.Path) -> str | No
         candidate = os.path.splitext(part)[0] if part.endswith(".py") else part
         if candidate in stems:
             return None
+
+    sibling_matches = _sibling_package_stems(rel_path, scenario_root, stems)
+    if len(sibling_matches) == 1:
+        return None
 
     return (
         f"Error: no matching S3Key found for write to {rel_path}. "
@@ -202,8 +230,39 @@ def dispatch_file_tool(name: str, inputs: dict, scenario_dir: str) -> str:
         entries = sorted(
             ("DIR  " if (target / e).is_dir() else "FILE ") + e
             for e in os.listdir(target)
+            if e != "fault_manifest.json"
         )
         return "\n".join(entries) if entries else "(empty)"
+
+    if name == "validate_fix":
+        template_path = scenario_root / "faulted.yaml"
+        deployment_dir = scenario_root / "deployment"
+        if not template_path.exists():
+            return "Error: faulted.yaml does not exist."
+        lint = run_lint(str(template_path))
+        stems = extract_s3key_stems(str(template_path))
+        found = []
+        missing = []
+        for stem in sorted(stems):
+            matches = []
+            for dirpath, dirnames, filenames in os.walk(deployment_dir):
+                if stem in dirnames:
+                    matches.append(os.path.relpath(os.path.join(dirpath, stem), deployment_dir))
+                if f"{stem}.py" in filenames:
+                    matches.append(os.path.relpath(os.path.join(dirpath, f"{stem}.py"), deployment_dir))
+            if matches:
+                found.append(f"{stem}: {matches[0].replace(os.sep, '/')}")
+            else:
+                missing.append(stem)
+        status = "Validation passed" if lint.get("passed") and not missing else "Validation failed"
+        parts = [status]
+        parts.append("cfn-lint: passed" if lint.get("passed") else "cfn-lint: failed")
+        if lint.get("fatal_errors"):
+            parts.append("lint_errors: " + "; ".join(str(e) for e in lint["fatal_errors"]))
+        parts.append("packages: " + (", ".join(found) if found else "(none)"))
+        if missing:
+            parts.append("missing package sources: " + ", ".join(missing))
+        return "\n".join(parts)
 
     if name == "submit_fix":
         return ""

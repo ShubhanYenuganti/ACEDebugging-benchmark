@@ -182,6 +182,54 @@ def test_write_file_orphan_check_unknown_stem_rejected(tmp_path):
     assert "ghost" in result
 
 
+def test_write_file_accepts_helper_sibling_of_known_flat_lambda(tmp_path):
+    """write_file accepts helper modules that package with a known flat Lambda."""
+    from harness.agent.tools import dispatch_file_tool
+    (tmp_path / "faulted.yaml").write_text(
+        "Resources:\n"
+        "  Fn:\n"
+        "    Type: AWS::Lambda::Function\n"
+        "    Properties:\n"
+        "      Code:\n"
+        "        S3Key: handler.zip\n"
+    )
+    lambda_dir = tmp_path / "deployment" / "lambda"
+    lambda_dir.mkdir(parents=True)
+    (lambda_dir / "handler.py").write_text("# handler\n")
+    result = dispatch_file_tool(
+        "write_file",
+        {"path": "deployment/lambda/utils.py", "content": "# helper\n"},
+        str(tmp_path),
+    )
+    assert result.startswith("Written"), f"Unexpected: {result}"
+
+
+def test_validate_fix_reports_lint_and_package_preview(tmp_path, monkeypatch):
+    """validate_fix gives non-deploy validation feedback."""
+    from harness.agent import tools as tools_mod
+    (tmp_path / "faulted.yaml").write_text(
+        "Resources:\n"
+        "  Fn:\n"
+        "    Type: AWS::Lambda::Function\n"
+        "    Properties:\n"
+        "      Code:\n"
+        "        S3Key: handler.zip\n"
+    )
+    lambda_dir = tmp_path / "deployment" / "lambda"
+    lambda_dir.mkdir(parents=True)
+    (lambda_dir / "handler.py").write_text("# handler\n")
+    monkeypatch.setattr(
+        tools_mod,
+        "run_lint",
+        lambda _path: {"passed": True, "fatal_errors": []},
+    )
+
+    result = tools_mod.dispatch_file_tool("validate_fix", {}, str(tmp_path))
+
+    assert "Validation passed" in result
+    assert "handler" in result
+
+
 def test_list_directory(tmp_path):
     from harness.agent.tools import dispatch_file_tool
     (tmp_path / "deployment" / "lambda").mkdir(parents=True)
@@ -204,7 +252,7 @@ def test_file_tool_definitions_are_openai_format():
         assert "name" in tool["function"]
         assert "parameters" in tool["function"]
     names = [t["function"]["name"] for t in FILE_TOOL_DEFINITIONS]
-    assert set(names) == {"read_file", "write_file", "list_directory", "submit_fix"}
+    assert set(names) == {"read_file", "write_file", "list_directory", "submit_fix", "validate_fix"}
 
 
 # ── LiteLLM response helpers ──────────────────────────────────────────────────
@@ -276,6 +324,7 @@ def test_loop_exits_on_stop_reason(tmp_path):
         ))
 
     assert submitted is False
+    assert mock_llm.call_args.kwargs["tool_choice"] == "auto"
 
 
 def test_loop_exits_on_end_turn(tmp_path):
