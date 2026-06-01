@@ -13,10 +13,14 @@ import litellm
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from harness.agent.memory import MemoryStore
 from harness.agent.tools import (
     FILE_TOOL_DEFINITIONS,
+    MEMORY_TOOL_DEFINITIONS,
     _FILE_TOOL_NAMES,
+    _MEMORY_TOOL_NAMES,
     dispatch_file_tool,
+    dispatch_memory_tool,
     filter_model_tools,
     mcp_to_openai_tool,
 )
@@ -122,11 +126,22 @@ async def _start_mcp_session(harness_api_key: str):
             yield session
 
 
-def _build_system(context: dict) -> str:
+def _build_system(context: dict, memory_enabled: bool = False) -> str:
     outputs = ""
     if context.get("stack_outputs"):
         outputs = "\nStack outputs:\n" + "\n".join(
             f"  {k}: {v}" for k, v in context["stack_outputs"].items()
+        )
+    memory = ""
+    if memory_enabled:
+        memory = (
+            "\n\nMEMORY: You have a private persistent memory store (tools "
+            "memory_write, memory_read, memory_search) that survives across your "
+            "fix attempts in this scenario and starts empty. Use it however you "
+            "find useful — for example to record what each fix attempt changed and "
+            "how the tests responded, hypotheses you have ruled out, or key "
+            "diagnostic findings — so you do not repeat work. Memory calls are free "
+            "and never count against you."
         )
     return (
         "You are evaluating a deployed AWS infrastructure system that has a fault injected.\n"
@@ -147,6 +162,7 @@ def _build_system(context: dict) -> str:
         f"Template: {context['template_path']}\n"
         f"Deployment dir: {context['deployment_dir']}"
         + outputs
+        + memory
     )
 
 
@@ -185,16 +201,23 @@ async def run_agent_loop(
     verify_callback=None,
     max_test_retries: int = 5,
     max_no_tool_failures: int = 3,
+    memory_db_path: str | None = None,
 ) -> bool:
     """Drive the model through the scenario. Returns True if submit_fix was called."""
-    async with _start_mcp_session(harness_api_key) as session:
+    memory_enabled = memory_db_path is not None
+    store = MemoryStore(memory_db_path, run_id) if memory_enabled else None
+    submitted = False
+    # try/finally only guarantees store.close(); the async-with body keeps its
+    # original indentation (one extra space here) to avoid re-indenting ~290 lines.
+    try:
+      async with _start_mcp_session(harness_api_key) as session:
         mcp_list = await session.list_tools()
         tools = filter_model_tools(
             [mcp_to_openai_tool(t) for t in mcp_list.tools]
-        ) + FILE_TOOL_DEFINITIONS
+        ) + FILE_TOOL_DEFINITIONS + (MEMORY_TOOL_DEFINITIONS if memory_enabled else [])
 
         messages = [
-            {"role": "system", "content": _build_system(context)},
+            {"role": "system", "content": _build_system(context, memory_enabled)},
             {"role": "user", "content": f"{context['scenario_brief']}\n\n{context['instruction']}"},
         ]
         submitted = False
@@ -475,6 +498,29 @@ async def run_agent_loop(
                                     print(f"    {dl}", flush=True)
                                 if len(changed) > 10:
                                     print(f"    ... ({len(changed) - 10} more changes)", flush=True)
+                elif name in _MEMORY_TOOL_NAMES:
+                    # Agent-managed memory: dispatched locally, never round-tripped
+                    # through MCP, so it is NOT logged to tool_call_trace.json and
+                    # does not count toward the efficiency dimension. It also does
+                    # not touch the write counters that gate submit_fix.
+                    content = (
+                        dispatch_memory_tool(name, args, store)
+                        if store is not None
+                        else "Error: memory is not enabled for this run."
+                    )
+                    try:
+                        result_logger.log_memory_event(
+                            run_id,
+                            turn=turn,
+                            op=name.replace("memory_", ""),
+                            namespace=args.get("namespace", "") or "",
+                            key=args.get("key", "") or "",
+                        )
+                    except OSError:
+                        pass
+                    if verbose:
+                        _preview = content[:120].replace("\n", " ")
+                        print(f"  [memory:{name}] {_preview}", flush=True)
                 else:
                     try:
                         mcp_result = await session.call_tool(name, args)
@@ -523,5 +569,8 @@ async def run_agent_loop(
                     "Do not repeat the previous call."
                 ),
             })
+    finally:
+        if store is not None:
+            store.close()
 
     return submitted

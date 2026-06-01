@@ -158,6 +158,7 @@ import harness.shared.result_logger as rl
 from harness.shared.result_logger import (
     init_run,
     log_file_change,
+    log_memory_event,
     log_tool_call,
     log_verify_result,
 )
@@ -170,6 +171,19 @@ class TestResultLogger:
         run_dir = tmp_path / "run-001"
         assert run_dir.is_dir()
         assert (run_dir / "scenario_id.txt").read_text() == "arch01_fault01"
+        assert json.loads((run_dir / "tool_call_trace.json").read_text()) == []
+        assert json.loads((run_dir / "memory_trace.json").read_text()) == []
+
+    def test_log_memory_event_appends_to_memory_trace_only(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(rl, "RESULTS_DIR", str(tmp_path))
+        init_run("run-mem", "arch01_fault01")
+        log_memory_event("run-mem", turn=2, op="write", namespace="obs", key="k1")
+        log_memory_event("run-mem", turn=3, op="search", namespace="", key="")
+        run_dir = tmp_path / "run-mem"
+        trace = json.loads((run_dir / "memory_trace.json").read_text())
+        assert [e["op"] for e in trace] == ["write", "search"]
+        assert trace[0]["namespace"] == "obs" and trace[0]["key"] == "k1"
+        # Memory ops must never leak into the diagnostic tool-call trace.
         assert json.loads((run_dir / "tool_call_trace.json").read_text()) == []
 
     def test_log_tool_call_appends_entries_in_order(self, tmp_path, monkeypatch):

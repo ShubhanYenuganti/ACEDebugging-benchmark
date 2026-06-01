@@ -16,6 +16,9 @@ def init_run(run_id: str, scenario_id: str) -> None:
     # Edit trace is kept separate from tool_call_trace.json: file edits are NOT
     # MCP diagnostic calls and must not pollute the efficiency tool-call count.
     (run_dir / "edit_trace.json").write_text("[]")
+    # Memory trace records the agent's own memory_write/read/search calls. Like
+    # edit_trace, it is analysis-only and never seen by the scorer.
+    (run_dir / "memory_trace.json").write_text("[]")
 
 
 def log_tool_call(
@@ -50,6 +53,27 @@ def log_edit_event(run_id: str, turn: int, action: str, path: str = "") -> None:
     path_file = Path(RESULTS_DIR) / run_id / "edit_trace.json"
     path_file.parent.mkdir(parents=True, exist_ok=True)
     entry = {"turn": turn, "action": action, "path": path}
+    with _trace_lock:
+        existing: list = []
+        if path_file.is_file():
+            try:
+                existing = json.loads(path_file.read_text())
+            except (json.JSONDecodeError, OSError):
+                existing = []
+        existing.append(entry)
+        path_file.write_text(json.dumps(existing, indent=2))
+
+
+def log_memory_event(run_id: str, turn: int, op: str, namespace: str = "", key: str = "") -> None:
+    """Append one agent memory operation to memory_trace.json (analysis-only).
+
+    Records what the model did with its memory store (op = write/read/search) so
+    you can measure how much each model leaned on memory post-hoc. It is NOT a
+    diagnostic tool call and is never fed to the scorer, mirroring edit_trace.
+    """
+    path_file = Path(RESULTS_DIR) / run_id / "memory_trace.json"
+    path_file.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"turn": turn, "op": op, "namespace": namespace, "key": key}
     with _trace_lock:
         existing: list = []
         if path_file.is_file():

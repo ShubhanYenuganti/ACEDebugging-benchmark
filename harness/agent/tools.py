@@ -14,6 +14,11 @@ WRITE_MAX_BYTES = 524_288    # 512 KB
 _BLOCKED_READS = {"fault_manifest.json", "known_good.yaml"}
 _SUBMIT_TOOL = "submit_fix"
 _FILE_TOOL_NAMES = {"read_file", "write_file", "list_directory", "submit_fix", "validate_fix"}
+_MEMORY_TOOL_NAMES = {"memory_write", "memory_read", "memory_search"}
+
+# Max content rendered per row in memory_read / memory_search output. Full
+# content stays in the DB; only the model-facing text is truncated.
+MEMORY_OUTPUT_CONTENT_CHARS = 4096
 
 
 def mcp_to_openai_tool(mcp_tool) -> dict:
@@ -120,6 +125,119 @@ FILE_TOOL_DEFINITIONS: list[dict] = [
         },
     },
 ]
+
+
+MEMORY_TOOL_DEFINITIONS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_write",
+            "description": (
+                "Save a note to your private persistent memory for this scenario. "
+                "Upserts on (namespace, key): writing the same namespace+key again "
+                "replaces the previous note. Invent namespaces that suit you "
+                "(e.g. tried_fixes, ruled_out, observations). Free — never counts "
+                "against you."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string", "description": "Group for the note, e.g. tried_fixes"},
+                    "key": {"type": "string", "description": "Unique key within the namespace"},
+                    "content": {"type": "string", "description": "The note text to store"},
+                },
+                "required": ["namespace", "key", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_read",
+            "description": (
+                "Read your memory. With a namespace: returns its notes, newest "
+                "first. Without one: lists your namespaces and how many notes each holds."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "namespace": {"type": "string", "description": "Optional namespace to read; omit to list all namespaces"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_search",
+            "description": (
+                "Full-text search your memory notes by query string, optionally "
+                "scoped to one namespace."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Text to search for in note content/keys"},
+                    "namespace": {"type": "string", "description": "Optional namespace to restrict the search to"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+
+def _format_memory_rows(rows: list[dict]) -> str:
+    blocks = []
+    for r in rows:
+        content = r["content"]
+        if len(content) > MEMORY_OUTPUT_CONTENT_CHARS:
+            content = content[:MEMORY_OUTPUT_CONTENT_CHARS] + "… (truncated)"
+        blocks.append(
+            f"[{r['namespace']}/{r['key']}] (run {r['run_id']}, {r['ts']})\n{content}"
+        )
+    return "\n\n".join(blocks)
+
+
+def dispatch_memory_tool(name: str, inputs: dict, store) -> str:
+    """Dispatch a memory tool against a MemoryStore. Returns model-facing text.
+
+    Never raises on bad input — returns an 'Error: ...' string instead, mirroring
+    dispatch_file_tool. These calls are local-only: they are never logged to
+    tool_call_trace.json and do not count toward the efficiency dimension.
+    """
+    if name == "memory_write":
+        return store.write(
+            inputs.get("namespace", ""),
+            inputs.get("key", ""),
+            inputs.get("content", ""),
+        )
+
+    if name == "memory_read":
+        namespace = inputs.get("namespace")
+        if namespace is None or namespace == "":
+            summary = store.read(None)
+            if not summary:
+                return "(memory is empty)"
+            return "Namespaces:\n" + "\n".join(
+                f"  - {r['namespace']} ({r['count']})" for r in summary
+            )
+        rows = store.read(namespace)
+        if not rows:
+            return f"(namespace '{namespace}' is empty)"
+        return _format_memory_rows(rows)
+
+    if name == "memory_search":
+        query = inputs.get("query", "")
+        if not query:
+            return "Error: memory_search requires a non-empty 'query'."
+        rows = store.search(query, inputs.get("namespace"))
+        if not rows:
+            return "(no matching entries)"
+        return _format_memory_rows(rows)
+
+    return f"Error: unknown memory tool '{name}'."
 
 
 def _sibling_package_stems(rel_path: str, scenario_root: pathlib.Path, stems: dict) -> list[str]:

@@ -545,6 +545,108 @@ def test_file_tool_calls_not_logged(tmp_path):
     mock_log.assert_not_called()
 
 
+# ── memory layer tests ────────────────────────────────────────────────────────
+
+def test_memory_calls_logged_to_memory_trace_not_tool_trace(tmp_path):
+    """memory_write dispatches locally: absent from tool_call_trace, present in memory_trace."""
+    from harness.agent.loop import run_agent_loop
+    from harness.agent.memory import MemoryStore
+
+    db_path = str(tmp_path / "agent_memory.db")
+
+    def _resp_factory():
+        yield _make_litellm_response(
+            "tool_calls",
+            tool_calls=[_make_tool_call(
+                "tc1", "memory_write",
+                {"namespace": "obs", "key": "k1", "content": "root cause: missing IAM perm"},
+            )],
+        )
+        while True:
+            yield _make_litellm_response("stop")
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=_resp_factory()), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx, \
+         patch("harness.agent.loop.result_logger.log_tool_call") as mock_tool_log, \
+         patch("harness.agent.loop.result_logger.log_memory_event") as mock_mem_log:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="anthropic/claude-sonnet-4-6",
+            api_key="key",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="tmem1",
+            harness_api_key="hk",
+            max_turns=5,
+            memory_db_path=db_path,
+        ))
+
+    # Memory op is NOT an MCP diagnostic call.
+    mock_tool_log.assert_not_called()
+    # Memory op IS recorded to the analysis-only memory trace.
+    assert mock_mem_log.call_count == 1
+    _, kwargs = mock_mem_log.call_args
+    assert kwargs.get("op") == "write"
+    assert kwargs.get("namespace") == "obs"
+
+    # The note actually persisted to the store.
+    store = MemoryStore(db_path, "tmem1")
+    rows = store.read("obs")
+    store.close()
+    assert len(rows) == 1
+    assert "IAM perm" in rows[0]["content"]
+
+
+def test_memory_write_does_not_count_as_code_edit(tmp_path):
+    """A memory_write must NOT satisfy submit_fix's 'you must edit a file first' gate."""
+    from harness.agent.loop import run_agent_loop
+
+    deploy_cb = MagicMock()
+
+    def _resp_factory():
+        yield _make_litellm_response(
+            "tool_calls",
+            tool_calls=[_make_tool_call("tc1", "memory_write",
+                                        {"namespace": "n", "key": "k", "content": "c"})],
+        )
+        yield _make_litellm_response(
+            "tool_calls",
+            tool_calls=[_make_tool_call("tc2", "submit_fix", {})],
+        )
+        while True:
+            yield _make_litellm_response("stop")
+
+    with patch("harness.agent.loop.litellm.completion", side_effect=_resp_factory()), \
+         patch("harness.agent.loop._start_mcp_session") as mock_sess_ctx:
+
+        sess = _mock_mcp_session(["ace_invoke_lambda"])
+        mock_sess_ctx.return_value.__aenter__ = AsyncMock(return_value=sess)
+        mock_sess_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        asyncio.run(run_agent_loop(
+            model="anthropic/claude-sonnet-4-6",
+            api_key="key",
+            base_url=None,
+            context={"scenario_brief": "b", "instruction": "i",
+                     "stack_outputs": {}, "template_path": "/t", "deployment_dir": "/d"},
+            scenario_dir=str(tmp_path),
+            run_id="tmem2",
+            harness_api_key="hk",
+            max_turns=5,
+            deploy_callback=deploy_cb,
+            memory_db_path=str(tmp_path / "agent_memory.db"),
+        ))
+
+    # submit_fix should have been refused (no write_file yet) → deploy never invoked.
+    deploy_cb.assert_not_called()
+
+
 # ── deploy_callback tests ─────────────────────────────────────────────────────
 
 def test_deploy_callback_success(tmp_path):

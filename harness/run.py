@@ -13,6 +13,7 @@ import uuid
 from dotenv import load_dotenv
 
 from harness.agent.loop import run_agent_loop
+from harness.agent.memory import teardown_memory
 from harness.shared.localstack_client import health_check
 from harness.shared.result_logger import log_submission_attempts, log_verify_result
 from harness.runner.context_builder import build_context
@@ -310,6 +311,10 @@ def main() -> None:
     scenario_dir = os.path.abspath(args.scenario_dir)
     run_id = args.run_id or uuid.uuid4().hex[:8]
     scenario_id = os.path.basename(scenario_dir)
+    # Scenario-scoped agent memory DB. Path computed here (not inside the agent
+    # loop) so a future cross-run / scenario-keyed store is a one-line change.
+    # Torn down after scoring so the next scenario starts blank.
+    _memory_db_path = os.path.join("results", run_id, "agent_memory.db")
 
     # Step 2 — health check
     try:
@@ -406,6 +411,7 @@ def main() -> None:
                     verify_callback=runner.run_functional_tests,
                     max_test_retries=5,
                     max_turns=args.max_turns,
+                    memory_db_path=_memory_db_path,
                 )
             )
         except BaseException as exc:
@@ -438,6 +444,11 @@ def main() -> None:
     base_dir = os.path.dirname(os.path.dirname(scenario_dir))
     print(f"[scorer] Running scoring agent ({SCORING_MODEL})...")
     score_result = score_run(run_id, base_dir)
+
+    # Step 10b — tear down the agent memory DB now that the run is graded. The
+    # next scenario starts with a blank store. memory_trace.json is retained for
+    # post-hoc analysis; only the SQLite store is removed.
+    teardown_memory(_memory_db_path)
 
     # Step 11 — print human-readable summary (stdout may be closed if piped to stub)
     try:
