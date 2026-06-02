@@ -265,6 +265,7 @@ export const observeTools = [
         allEvents.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
         return allEvents.slice(-line_count);
       } catch (err) {
+        if (err.name === "ResourceNotFoundException") return [];
         return { error: err.message, error_type: err.name ?? "LOGS_ERROR" };
       }
     },
