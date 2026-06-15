@@ -15,10 +15,14 @@ This document walks through a complete evaluation run: starting LocalStack, runn
 
 ## Step 1 — Start LocalStack
 
+This project requires the LocalStack **Ultimate** license. The free/Hobby tier does not support CloudTrail or real IAM enforcement.
+
 ```bash
-localstack start -d
+LOCALSTACK_AUTH_TOKEN=ls-... ENFORCE_IAM=1 IAM_SOFT_MODE=0 localstack start -d
 until localstack status services 2>/dev/null | grep -q "running"; do sleep 2; done
 ```
+
+The harness fails fast at startup (via `assert_iam_enforcement()`) if IAM enforcement is not active.
 
 The harness communicates with LocalStack at `http://localhost:4566` using fake credentials (`test`/`test`). All CloudFormation stacks, Lambda functions, SQS queues, and S3 buckets are created there.
 
@@ -142,7 +146,7 @@ When `--model` is provided:
 1. The harness deploys the faulted scenario and prints context as usual.
 2. A daemon thread starts `run_agent_loop`, which:
    - Spawns the Node.js MCP server as a stdio subprocess (no manual registration needed).
-   - Discovers all 57 MCP diagnostic tools at runtime (see tool inventory below).
+   - Discovers all 56 MCP tools at runtime (54 diagnostic + 2 score; see tool inventory below).
    - Filters out score tools (`ace_verify_fix`, `ace_score_run`) so the model cannot call them.
    - Adds Python-native file tools (`read_file`, `write_file`, `list_directory`, `submit_fix`).
    - Loops calling the LLM up to 50 turns (default), dispatching tool calls each turn.
@@ -158,7 +162,7 @@ If the agent thread crashes (auth error, network failure, etc.), the harness exi
 
 #### MCP diagnostic tool inventory
 
-The MCP server exposes 57 tools across 27 LocalStack services. The model has access to 55 (score tools are filtered out).
+The MCP server exposes 56 tools across 27 LocalStack services (54 diagnostic + 2 score). The model has access to 54 (score tools are filtered out).
 
 **Core probe tools (6)** — `probe.js`:
 `ace_invoke_endpoint`, `ace_invoke_lambda`, `ace_check_queue_depth`, `ace_read_table_item`, `ace_check_event_source`, `ace_check_s3_object`
@@ -172,10 +176,13 @@ The MCP server exposes 57 tools across 27 LocalStack services. The model has acc
 **Extended observe tools (21)** — `observe_extended.js`:
 `ace_get_sns_topic`, `ace_get_eventbridge_rule`, `ace_get_schedule`, `ace_describe_state_machine`, `ace_describe_swf_domain`, `ace_get_ses_identity`, `ace_describe_security_group`, `ace_list_dns_records`, `ace_get_resolver_endpoint`, `ace_describe_kinesis_stream`, `ace_describe_firehose_stream`, `ace_describe_dynamo_stream`, `ace_describe_kms_key`, `ace_describe_secret`, `ace_describe_parameters`, `ace_get_public_access_block`, `ace_get_metric_statistics`, `ace_get_s3_object_content`, `ace_filter_log_events`, `ace_get_stack_events`, `ace_get_lambda_metrics`
 
+**Tracing observe tools (1)** — `observe_tracing.js`:
+`ace_lookup_events` (CloudTrail LookupEvents — recent API-call history; X-Ray tools deferred to a future phase)
+
 **Score tools (2, harness-only)** — `score.js`:
 `ace_verify_fix`, `ace_score_run`
 
-**Services covered:** CloudFormation, Lambda, DynamoDB, DynamoDB Streams, SQS, IAM, CloudWatch Logs, CloudWatch Metrics, S3, S3 Control, SNS, EventBridge, EventBridge Scheduler, Step Functions, SWF, SES, EC2, Route 53, Route 53 Resolver, Kinesis Streams, Kinesis Firehose, KMS, Secrets Manager, STS, SSM, API Gateway (via HTTP fetch)
+**Services covered:** CloudFormation, Lambda, DynamoDB, DynamoDB Streams, SQS, IAM, CloudWatch Logs, CloudWatch Metrics, S3, S3 Control, SNS, EventBridge, EventBridge Scheduler, Step Functions, SWF, SES, EC2, Route 53, Route 53 Resolver, Kinesis Streams, Kinesis Firehose, KMS, Secrets Manager, STS, SSM, CloudTrail, API Gateway (via HTTP fetch)
 
 ---
 

@@ -36,7 +36,7 @@ python harness/run.py scenarios/<scenario_dir>/ \
 |------------------|-----------------------------------------------------------------|
 | Harness code     | Python 3.11                                                     |
 | MCP server       | Node.js v22+                                                    |
-| LocalStack       | http://localhost:4566 (free tier)                               |
+| LocalStack       | http://localhost:4566 (Ultimate license; `ENFORCE_IAM=1 IAM_SOFT_MODE=0` required) |
 | AWS credentials  | accessKeyId=`test`, secretAccessKey=`test`, region=`us-east-1` |
 | IAM fake account | `000000000000`                                                  |
 
@@ -86,6 +86,7 @@ from harness.agent.loop import run_agent_loop
 - **Score tools require `HARNESS_API_KEY`.** Calls without it return `{"error": "unauthorized"}`. The inline agent filters `ace_verify_fix` and `ace_score_run` out of the model's tool list entirely.
 - **The inline agent's `write_file` is restricted** to `deployment/` and `faulted.yaml`. All other write paths are rejected. Path traversal is prevented via `resolve()` + `relative_to()`.
 - **`HARNESS_API_KEY` is required** when using `--model`. The harness validates this at startup and exits with a clear error if missing.
+- **IAM enforcement is required.** `run.py` calls `assert_iam_enforcement()` after the health check and exits if LocalStack was not started with `ENFORCE_IAM=1` / `IAM_SOFT_MODE=0`. Test fixtures that create Lambdas must define a real assumable role.
 
 ---
 
@@ -104,14 +105,15 @@ ace-bench/
 │   │   ├── cfn_lint_runner.py
 │   │   ├── file_differ.py
 │   │   └── result_logger.py
-│   ├── mcp_server/               # Phase B — 50 tools across 27 LocalStack services
-│   │   ├── index.js              # spreads all 5 tool arrays into MCP server
+│   ├── mcp_server/               # Phase B — 54 diagnostic + 2 score tools across 27 LocalStack services
+│   │   ├── index.js              # spreads all 6 tool arrays into MCP server
 │   │   ├── package.json
 │   │   └── tools/
 │   │       ├── probe.js           # 6 original probe tools
-│   │       ├── probe_extended.js  # 19 new probe tools (SNS→IAM sim)
+│   │       ├── probe_extended.js  # 22 extended probe tools (SNS→IAM sim)
 │   │       ├── observe.js         # 6 original observe tools
-│   │       ├── observe_extended.js # 17 new observe tools (SNS→CloudWatch)
+│   │       ├── observe_extended.js # 21 extended observe tools (SNS→CloudWatch)
+│   │       ├── observe_tracing.js  # 1 tool: ace_lookup_events (CloudTrail); X-Ray deferred to next phase
 │   │       └── score.js           # 2 score tools
 │   ├── runner/                   # Phase C
 │   │   ├── scenario_runner.py
