@@ -19,6 +19,7 @@ import { scoreTools } from "../harness/mcp_server/tools/score.js";
 
 import { probeExtendedTools } from "../harness/mcp_server/tools/probe_extended.js";
 import { observeExtendedTools } from "../harness/mcp_server/tools/observe_extended.js";
+import { observeTracingTools } from "../harness/mcp_server/tools/observe_tracing.js";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -1012,4 +1013,26 @@ test("ace_get_lambda_metrics clamps window_minutes to 60", async () => {
   const result = await t.handler({ function_name: FN, window_minutes: 999 });
   assert.ok(!result.error);
   assert.strictEqual(result.window_minutes, 60);
+});
+
+// === CloudTrail Tracing ===
+test("observe_tracing exports an array with the CloudTrail tool", () => {
+  assert.ok(Array.isArray(observeTracingTools));
+  assert.equal(observeTracingTools.length, 1);
+  assert.ok(observeTracingTools.some((t) => t.name === "ace_lookup_events"));
+});
+
+test("ace_lookup_events: returns events array or error", async () => {
+  const res = await tool(observeTracingTools, "ace_lookup_events").handler({ window_minutes: 30 });
+  if (res.error) { assert.ok(typeof res.error === "string"); }
+  else {
+    assert.ok(Array.isArray(res.events));
+    assert.equal(typeof res.count, "number");
+    assert.equal(res.window_minutes, 30);
+  }
+});
+
+test("ace_lookup_events: clamps max_results to <= 100", async () => {
+  const res = await tool(observeTracingTools, "ace_lookup_events").handler({ max_results: 9999 });
+  if (!res.error) { assert.ok(res.events.length <= 100); }
 });
