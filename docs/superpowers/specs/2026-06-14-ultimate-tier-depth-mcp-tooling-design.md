@@ -105,10 +105,40 @@ documented as a known limitation and the corresponding tool is scoped to where i
 works, or dropped. **Nothing in the spike ships** — it only decides what
 Section 2 builds and tells us which architectures each tool actually serves.
 
-### Spike findings (to be filled after Step 0)
+### Spike findings (2026-06-14)
 
-> _TBD — populated when the spike runs. Until then, Section 2's tool list is
-> provisional and may be pruned per these findings._
+Environment: LocalStack `2026.5.0.dev29` edition pro, license active (trial),
+`ENFORCE_IAM=1`, `IAM_SOFT_MODE=0`. Validated end-to-end against **arch01**
+(deployed via `validate_deploy.py`, traffic via its `functional_test.py`, all 7
+assertions passing). X-Ray behavior is LocalStack-wide (not arch-specific), so
+arch02/08/12 were not separately deployed for X-Ray — they would show the same
+empty X-Ray; CloudTrail is API-call-based and captures activity for any arch.
+
+| Capability | Result | Evidence |
+|------------|--------|----------|
+| CloudTrail `LookupEvents` | ✅ **Works** | After arch01 traffic, 10–30 events captured with real names (`Query`, `GetItem`, `UpdateItem`, `DescribeTable`, `ListEventSourceMappings`). |
+| CloudTrail — captures IAM-denied calls | ❌ **No** | A real `AccessDenied` S3 call was made; CloudTrail recorded 0 events with an `errorCode`. Enforcement rejects before the service layer, so denied calls are not logged. |
+| X-Ray `GetTraceSummaries` / `BatchGetTraces` | ⚠️ **Backend works, no auto-instrumentation** | Manual `PutTraceSegments` → `GetTraceSummaries` round-trips (1 trace returned). But with `TracingConfig: Active` on all 6 Lambdas + real traffic, 0 traces appear — LocalStack does not auto-emit segments for Lambda invocations. Traces only exist if handler code uses the X-Ray SDK. |
+| X-Ray `GetServiceGraph` | ❌ **Non-functional** | Returns 0 services even after a manually emitted segment and after live traffic. The service-map aggregation does not populate on this build. |
+| IAM enforcement ON | ✅ **Confirmed** | A no-policy IAM user (fresh access key) is denied (`AccessDenied`) on `s3:ListBuckets`. This is the validated detection recipe for Task 6. |
+
+**Consequences for the tool list (Section 2):**
+
+- **Keep `ace_lookup_events` (CloudTrail).** Real signal out of the box, no corpus
+  changes needed. Note: it surfaces *what the system did*, not IAM denials.
+- **Drop `ace_get_service_graph`.** Non-functional on this build; would ship a dead
+  tool.
+- **Defer `ace_get_trace_summaries` and `ace_get_trace`.** Supported APIs, but they
+  return nothing on the current corpus because handlers are not X-Ray-instrumented.
+  Shipping them now would give the evaluated model tools that always return empty.
+  Reconsider during the corpus-rebuild phase *if* we choose to instrument handlers
+  with the X-Ray SDK (and accept that the service graph remains unavailable).
+- **IAM enforcement** stays in scope (Task 6). Permission-fault diagnosis relies on
+  Lambda CloudWatch logs (existing `ace_get_log_tail` / `ace_filter_log_events`),
+  not CloudTrail.
+
+**Revised depth surface:** +1 tool now (`ace_lookup_events`) + the IAM-enforcement
+contract. X-Ray (2 trace tools) revisited in the corpus-rebuild phase.
 
 ---
 
