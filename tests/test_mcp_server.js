@@ -12,6 +12,7 @@ import { KMSClient, CreateKeyCommand } from "@aws-sdk/client-kms";
 import { SecretsManagerClient, CreateSecretCommand } from "@aws-sdk/client-secrets-manager";
 import { SSMClient, PutParameterCommand } from "@aws-sdk/client-ssm";
 import { SESClient, VerifyEmailIdentityCommand } from "@aws-sdk/client-ses";
+import { IAMClient, CreateRoleCommand, PutRolePolicyCommand } from "@aws-sdk/client-iam";
 
 import { probeTools } from "../harness/mcp_server/tools/probe.js";
 import { observeTools } from "../harness/mcp_server/tools/observe.js";
@@ -38,6 +39,7 @@ const kmsCl = new KMSClient(awsConfig);
 const secretsCl = new SecretsManagerClient(awsConfig);
 const ssmCl = new SSMClient(awsConfig);
 const sesCl = new SESClient(awsConfig);
+const iamCl = new IAMClient(awsConfig);
 
 const FN = "test-identity-fn";
 const TABLE = "test-table";
@@ -58,6 +60,27 @@ before(async () => {
   const zip = new JSZip();
   zip.file("index.js", "exports.handler = async (e) => ({ statusCode: 200, body: JSON.stringify(e) });");
   const zipBuf = await zip.generateAsync({ type: "nodebuffer" });
+
+  // IAM role the test Lambda assumes (required under ENFORCE_IAM=1)
+  try {
+    await iamCl.send(new CreateRoleCommand({
+      RoleName: "test-role",
+      AssumeRolePolicyDocument: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole" }],
+      }),
+    }));
+    await iamCl.send(new PutRolePolicyCommand({
+      RoleName: "test-role",
+      PolicyName: "test-role-inline",
+      PolicyDocument: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{ Effect: "Allow", Action: "*", Resource: "*" }],
+      }),
+    }));
+  } catch (e) {
+    if (!(e.name?.includes("EntityAlreadyExists") || e.message?.includes("already exist"))) throw e;
+  }
 
   for (const op of [
     () => lambda.send(new CreateFunctionCommand({
