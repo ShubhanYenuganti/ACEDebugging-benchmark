@@ -30,14 +30,14 @@ The model never sees `fault_manifest.json` or `known_good.yaml`. It only sees th
 | Phase | What it builds | Status |
 |-------|---------------|--------|
 | **A** | Shared Python utilities (LocalStack client, cfn-lint runner, file differ, result logger) | ✅ Complete — covered by `tests/test_shared.py` |
-| **B** | Diagnostic MCP server with 57 tools (6 probe, 22 probe-ext, 6 observe, 21 observe-ext, 2 score) | ✅ Complete — 124/124 Node tests passing |
+| **B** | Diagnostic MCP server with 56 tools (54 diagnostic + 2 score): 6 probe, 22 probe-ext, 6 observe, 21 observe-ext, 1 observe-tracing, 2 score | ✅ Complete — 126/126 Node tests passing |
 | **C** | Scenario runner + deployment handler (deploy faulted template, intercept fix submission) | ✅ Complete — 27 Python test functions |
 | **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | ✅ Complete — 2 Python test functions |
 | **E** | Harness entry point `run.py` — ties all phases together end-to-end | ✅ Complete — 1 E2E Python test function |
 | **F** | Autonomous scoring agent — Claude Sonnet scores 5 dimensions, writes `score.json` | ✅ Complete — 21 Python test functions |
 | **G** | Inline agent runner — LiteLLM universal adapter, drives any model end-to-end | ✅ Complete — 42 Python test functions |
 
-Current direct test inventory: 126 Python `def test_*` functions across `tests/*.py` plus 124 Node MCP test cases in `tests/test_mcp_server.js`.
+Current direct test inventory: 126 Python `def test_*` functions across `tests/*.py` plus 126 Node MCP test cases in `tests/test_mcp_server.js`.
 
 ---
 
@@ -47,7 +47,7 @@ Current direct test inventory: 126 Python `def test_*` functions across `tests/*
 
 - Python 3.11+
 - Node.js v22+
-- [LocalStack](https://docs.localstack.cloud/getting-started/installation/) (free tier)
+- [LocalStack](https://docs.localstack.cloud/getting-started/installation/) **Ultimate** license (not free/Hobby tier — CloudTrail and IAM enforcement require Ultimate)
 - `cfn-lint` (`pip install cfn-lint`)
 
 ```bash
@@ -60,8 +60,8 @@ pip install boto3 cfn-lint pytest
 # Install Node dependencies
 cd harness/mcp_server && npm install && cd ../..
 
-# Start LocalStack
-localstack start -d
+# Start LocalStack (Ultimate license required; IAM enforcement must be enabled)
+LOCALSTACK_AUTH_TOKEN=ls-... ENFORCE_IAM=1 IAM_SOFT_MODE=0 localstack start -d
 until localstack status services 2>/dev/null | grep -q "running"; do sleep 2; done
 ```
 
@@ -119,14 +119,15 @@ ace-bench/
 │   │   ├── file_differ.py          # snapshot + diff for deployment dir
 │   │   ├── result_logger.py        # thread-safe JSON result writer
 │   │   └── template_parser.py      # extract S3Key stems from CloudFormation YAML
-│   ├── mcp_server/           # Phase B — Node.js MCP server (57 tools, 27 services)
-│   │   ├── index.js                # McpServer + StdioTransport, spreads all 5 tool arrays
+│   ├── mcp_server/           # Phase B — Node.js MCP server (54 diagnostic + 2 score tools, 27 services)
+│   │   ├── index.js                # McpServer + StdioTransport, spreads all 6 tool arrays
 │   │   ├── package.json
 │   │   └── tools/
 │   │       ├── probe.js            # 6 core probe tools
 │   │       ├── probe_extended.js   # 22 extended probe tools
 │   │       ├── observe.js          # 6 core observe tools
 │   │       ├── observe_extended.js # 21 extended observe tools
+│   │       ├── observe_tracing.js  # 1 tool: ace_lookup_events (CloudTrail); X-Ray deferred to next phase
 │   │       └── score.js            # 2 gated score tools
 │   ├── runner/               # Phase C — Scenario runner
 │   │   ├── context_builder.py      # build_context: reads scenario files, guards manifest
@@ -185,7 +186,7 @@ ace-bench/
 
 ## MCP Diagnostic Tools
 
-57 tools across 27 LocalStack services. The model under evaluation sees 55 — score tools are filtered out at the agent layer.
+56 tools across 27 LocalStack services (54 diagnostic + 2 score). The model under evaluation sees 54 — score tools are filtered out at the agent layer. Requires LocalStack **Ultimate** license; IAM enforcement (`ENFORCE_IAM=1 IAM_SOFT_MODE=0`) must be active. A new CloudTrail tool (`ace_lookup_events`) surfaces recent API-call history. X-Ray trace tools are planned for a future phase.
 
 ### Probe tools — active inspection (6)
 
@@ -262,6 +263,12 @@ ace-bench/
 | `ace_get_stack_events` | CloudFormation stack event history with optional FAILED filter |
 | `ace_get_lambda_metrics` | Lambda invocations, errors, throttles, and duration summary |
 
+### Tracing observe tools — API-call history (1)
+
+| Tool | Description |
+|------|-------------|
+| `ace_lookup_events` | CloudTrail LookupEvents — recent API-call history (event name, source, resources, error_code/message). X-Ray trace tools are deferred to a future phase. |
+
 ### Score tools — harness only (2)
 
 | Tool | Description |
@@ -308,7 +315,7 @@ Quality is the dominant weight and cannot be overcome by speed or efficiency alo
 |-----------|-------|
 | Harness language | Python 3.11 |
 | MCP server | Node.js v22+ |
-| LocalStack endpoint | `http://localhost:4566` (free tier) |
+| LocalStack endpoint | `http://localhost:4566` (Ultimate license; `ENFORCE_IAM=1 IAM_SOFT_MODE=0` required) |
 | AWS credentials | `accessKeyId=test`, `secretAccessKey=test` |
 | AWS region | `us-east-1` |
 | IAM account ID | `000000000000` |

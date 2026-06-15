@@ -1,3 +1,7 @@
+**Update 2026-06-14:** This project now runs on the LocalStack **Ultimate** license, not the free/Hobby tier. The table below documents the old free-tier service set and is retained for historical reference. Depth tooling (CloudTrail `ace_lookup_events`) and real IAM enforcement now assume Ultimate; X-Ray trace tools are planned for a future phase.
+
+---
+
  Localstack's free tier:  Category | Allowed service | Notes |
 |----------|-----------------|--------|
 | **Analytics** | Amazon ElasticSearch | |

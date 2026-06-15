@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from harness.agent.loop import run_agent_loop
 from harness.agent.memory import teardown_memory
 from harness.shared.localstack_client import health_check
+from harness.shared.iam_enforcement import assert_iam_enforcement
 from harness.shared.result_logger import log_submission_attempts, log_verify_result
 from harness.runner.context_builder import build_context
 from harness.runner.scenario_runner import ScenarioRunner
@@ -316,9 +317,10 @@ def main() -> None:
     # Torn down after scoring so the next scenario starts blank.
     _memory_db_path = os.path.join("results", run_id, "agent_memory.db")
 
-    # Step 2 — health check
+    # Step 2 — health check + IAM enforcement contract
     try:
         health_check()
+        assert_iam_enforcement()
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)

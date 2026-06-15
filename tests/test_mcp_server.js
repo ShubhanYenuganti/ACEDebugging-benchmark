@@ -12,6 +12,7 @@ import { KMSClient, CreateKeyCommand } from "@aws-sdk/client-kms";
 import { SecretsManagerClient, CreateSecretCommand } from "@aws-sdk/client-secrets-manager";
 import { SSMClient, PutParameterCommand } from "@aws-sdk/client-ssm";
 import { SESClient, VerifyEmailIdentityCommand } from "@aws-sdk/client-ses";
+import { IAMClient, CreateRoleCommand, PutRolePolicyCommand } from "@aws-sdk/client-iam";
 
 import { probeTools } from "../harness/mcp_server/tools/probe.js";
 import { observeTools } from "../harness/mcp_server/tools/observe.js";
@@ -19,6 +20,7 @@ import { scoreTools } from "../harness/mcp_server/tools/score.js";
 
 import { probeExtendedTools } from "../harness/mcp_server/tools/probe_extended.js";
 import { observeExtendedTools } from "../harness/mcp_server/tools/observe_extended.js";
+import { observeTracingTools } from "../harness/mcp_server/tools/observe_tracing.js";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -37,6 +39,7 @@ const kmsCl = new KMSClient(awsConfig);
 const secretsCl = new SecretsManagerClient(awsConfig);
 const ssmCl = new SSMClient(awsConfig);
 const sesCl = new SESClient(awsConfig);
+const iamCl = new IAMClient(awsConfig);
 
 const FN = "test-identity-fn";
 const TABLE = "test-table";
@@ -57,6 +60,27 @@ before(async () => {
   const zip = new JSZip();
   zip.file("index.js", "exports.handler = async (e) => ({ statusCode: 200, body: JSON.stringify(e) });");
   const zipBuf = await zip.generateAsync({ type: "nodebuffer" });
+
+  // IAM role the test Lambda assumes (required under ENFORCE_IAM=1)
+  try {
+    await iamCl.send(new CreateRoleCommand({
+      RoleName: "test-role",
+      AssumeRolePolicyDocument: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole" }],
+      }),
+    }));
+    await iamCl.send(new PutRolePolicyCommand({
+      RoleName: "test-role",
+      PolicyName: "test-role-inline",
+      PolicyDocument: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{ Effect: "Allow", Action: "*", Resource: "*" }],
+      }),
+    }));
+  } catch (e) {
+    if (!(e.name?.includes("EntityAlreadyExists") || e.message?.includes("already exist"))) throw e;
+  }
 
   for (const op of [
     () => lambda.send(new CreateFunctionCommand({
@@ -1012,4 +1036,26 @@ test("ace_get_lambda_metrics clamps window_minutes to 60", async () => {
   const result = await t.handler({ function_name: FN, window_minutes: 999 });
   assert.ok(!result.error);
   assert.strictEqual(result.window_minutes, 60);
+});
+
+// === CloudTrail Tracing ===
+test("observe_tracing exports an array with the CloudTrail tool", () => {
+  assert.ok(Array.isArray(observeTracingTools));
+  assert.equal(observeTracingTools.length, 1);
+  assert.ok(observeTracingTools.some((t) => t.name === "ace_lookup_events"));
+});
+
+test("ace_lookup_events: returns events array or error", async () => {
+  const res = await tool(observeTracingTools, "ace_lookup_events").handler({ window_minutes: 30 });
+  if (res.error) { assert.ok(typeof res.error === "string"); }
+  else {
+    assert.ok(Array.isArray(res.events));
+    assert.equal(typeof res.count, "number");
+    assert.equal(res.window_minutes, 30);
+  }
+});
+
+test("ace_lookup_events: clamps max_results to <= 100", async () => {
+  const res = await tool(observeTracingTools, "ace_lookup_events").handler({ max_results: 9999 });
+  if (!res.error) { assert.ok(res.events.length <= 100); }
 });
