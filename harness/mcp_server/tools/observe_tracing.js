@@ -69,7 +69,7 @@ export const observeTracingTools = [
   {
     name: "ace_get_trace_summaries",
     description:
-      "X-Ray GetTraceSummaries: list recent trace summaries over a time window. Returns per-trace metadata: id, duration, response_time, has_error, has_fault, has_throttle, http_status, entry_service. Use to find which requests had errors or high latency; then call ace_get_trace for the full segment tree. Defaults: last 30 min, up to 100 traces.",
+      "X-Ray GetTraceSummaries: list recent traces over a window with error/fault/throttle flags, to find which requests had errors or high latency; then call ace_get_trace for the full segment tree. Optional X-Ray filter_expression (e.g. 'fault = true'); only_errors is a convenience that applies 'error = true OR fault = true' when no filter_expression is given. Defaults: last 60 min. Returns nothing unless scenario handlers are X-Ray-instrumented.",
     inputSchema: {
       type: "object",
       properties: {
@@ -79,11 +79,11 @@ export const observeTracingTools = [
       },
       required: [],
     },
-    async handler({ window_minutes = 30, filter_expression, only_errors = false } = {}) {
-      const clampedWindow = Math.min(Math.max(1, window_minutes ?? 30), 1440);
+    async handler({ window_minutes = 60, filter_expression, only_errors = false } = {}) {
+      const clampedWindow = Math.min(Math.max(1, window_minutes ?? 60), 1440);
       const endTime = new Date();
       const startTime = new Date(endTime.getTime() - clampedWindow * 60 * 1000);
-      const effectiveFilter = filter_expression ?? (only_errors ? "fault = true OR error = true" : undefined);
+      const effectiveFilter = filter_expression ?? (only_errors ? "error = true OR fault = true" : undefined);
       try {
         const res = await xrayClient.send(new GetTraceSummariesCommand({
           StartTime: startTime,
@@ -93,13 +93,13 @@ export const observeTracingTools = [
         }));
         const traces = (res.TraceSummaries ?? []).map((s) => ({
           id: s.Id,
-          duration: s.Duration,
-          response_time: s.ResponseTime,
+          duration: s.Duration ?? null,
+          response_time: s.ResponseTime ?? null,
           has_error: s.HasError ?? false,
           has_fault: s.HasFault ?? false,
           has_throttle: s.HasThrottle ?? false,
           http_status: s.Http?.HttpStatus ?? null,
-          entry_service: s.EntryPoint?.Name ?? null,
+          entry_service: (s.ServiceIds ?? [])[0]?.Name ?? null,
         }));
         return { traces, count: traces.length, window_minutes: clampedWindow };
       } catch (err) {
@@ -123,28 +123,28 @@ export const observeTracingTools = [
       try {
         const res = await xrayClient.send(new BatchGetTracesCommand({ TraceIds: [trace_id] }));
         const trace = (res.Traces ?? [])[0];
-        if (!trace) return { error: "trace not found", error_type: "NOT_FOUND" };
+        if (!trace) return { trace_id, segments: [] };
         const segments = (trace.Segments ?? []).map((seg) => {
           let doc = {};
           try { doc = JSON.parse(seg.Document ?? "{}"); } catch { doc = {}; }
           const subsegments = (doc.subsegments ?? []).map((sub) => ({
-            name: sub.name,
+            name: sub.name ?? null,
             namespace: sub.namespace ?? null,
-            error: sub.error ?? false,
-            fault: sub.fault ?? false,
+            error: !!sub.error,
+            fault: !!sub.fault,
             http_status: sub.http?.response?.status ?? null,
             aws_operation: sub.aws?.operation ?? null,
           }));
+          const duration = (typeof doc.end_time === "number" && typeof doc.start_time === "number")
+            ? +(doc.end_time - doc.start_time).toFixed(3) : null;
           return {
-            id: doc.id,
-            name: doc.name,
-            start_time: doc.start_time,
-            end_time: doc.end_time,
-            error: doc.error ?? false,
-            fault: doc.fault ?? false,
-            throttle: doc.throttle ?? false,
+            name: doc.name ?? null,
+            origin: doc.origin ?? null,
+            error: !!doc.error,
+            fault: !!doc.fault,
+            throttle: !!doc.throttle,
             http_status: doc.http?.response?.status ?? null,
-            duration: doc.end_time && doc.start_time ? doc.end_time - doc.start_time : null,
+            duration,
             subsegments,
           };
         });

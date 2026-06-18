@@ -1087,27 +1087,38 @@ test("ace_get_trace: missing trace_id returns error", async () => {
   assert.equal(res.error_type, "INVALID_INPUT");
 });
 
-test("ace_get_trace: round-trips a seeded segment", async () => {
+test("ace_get_trace: unknown trace_id returns structured-empty", async () => {
+  const epoch = Date.now() / 1000;
+  const traceId = `1-${Math.floor(epoch).toString(16)}-${Array.from({length:24},()=>Math.floor(Math.random()*16).toString(16)).join("")}`;
+  const res = await tool(observeTracingTools, "ace_get_trace").handler({ trace_id: traceId });
+  if (res.error) { assert.ok(typeof res.error === "string"); }
+  else {
+    assert.equal(res.trace_id, traceId);
+    assert.deepEqual(res.segments, []);
+  }
+});
+
+test("ace_get_trace: round-trips a seeded segment with subsegment", async () => {
   const xray = new XRayClient({
     endpoint: "http://localhost:4566", region: "us-east-1",
     credentials: { accessKeyId: "test", secretAccessKey: "test" },
   });
   const epoch = Date.now() / 1000;
   const traceId = `1-${Math.floor(epoch).toString(16)}-${Array.from({length:24},()=>Math.floor(Math.random()*16).toString(16)).join("")}`;
-  const segId = Array.from({length:16},()=>Math.floor(Math.random()*16).toString(16)).join("");
   const segment = JSON.stringify({
     trace_id: traceId,
-    id: segId,
+    id: Array.from({length:16},()=>Math.floor(Math.random()*16).toString(16)).join(""),
     name: "ace-test-service",
     start_time: epoch - 1,
     end_time: epoch,
     in_progress: false,
     subsegments: [{
       id: Array.from({length:16},()=>Math.floor(Math.random()*16).toString(16)).join(""),
-      name: "DynamoDB",
+      name: "ace-test-table",
       namespace: "aws",
-      start_time: epoch - 0.5,
+      start_time: epoch - 0.9,
       end_time: epoch - 0.1,
+      fault: true,
       aws: { operation: "PutItem" },
     }],
   });
@@ -1117,11 +1128,13 @@ test("ace_get_trace: round-trips a seeded segment", async () => {
     // LocalStack not available — skip
     return;
   }
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 1500));
   const res = await tool(observeTracingTools, "ace_get_trace").handler({ trace_id: traceId });
-  if (res.error) { assert.ok(typeof res.error === "string"); }
-  else {
-    assert.equal(res.trace_id, traceId);
-    assert.ok(Array.isArray(res.segments));
-  }
+  if (res.error) return; // LocalStack X-Ray unavailable in this env; tolerated
+  assert.equal(res.trace_id, traceId);
+  assert.ok(res.segments.length >= 1);
+  const sub = res.segments[0].subsegments.find((s) => s.name === "ace-test-table");
+  assert.ok(sub);
+  assert.equal(sub.fault, true);
+  assert.equal(sub.aws_operation, "PutItem");
 });
