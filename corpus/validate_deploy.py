@@ -71,6 +71,9 @@ def _zip_and_upload(arch_dir, s3):
     for fn_dir in sorted(lambda_dir.iterdir()):
         if not fn_dir.is_dir():
             continue
+        # Skip utility dirs that are not Lambda function packages
+        if fn_dir.name.startswith("_"):
+            continue
         index_file = fn_dir / "index.py"
         if not index_file.exists():
             continue
@@ -79,7 +82,12 @@ def _zip_and_upload(arch_dir, s3):
             tmp_path = tmp.name
         try:
             with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.write(index_file, "index.py")
+                # Walk the entire handler dir so vendored packages
+                # (e.g. aws_xray_sdk, xray_instrument.py) are included.
+                for file_path in sorted(fn_dir.rglob("*")):
+                    if file_path.is_file():
+                        arcname = file_path.relative_to(fn_dir)
+                        zf.write(file_path, arcname)
             with open(tmp_path, "rb") as f:
                 s3.put_object(Bucket=ARTIFACT_BUCKET, Key=zip_key, Body=f.read())
             uploaded.append(zip_key)

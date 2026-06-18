@@ -67,6 +67,11 @@ Resources:
                   - dynamodb:UpdateItem
                   - dynamodb:DeleteItem
                 Resource: !GetAtt FriendTable.Arn
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
 
   StreamHandlerRole:
     Type: AWS::IAM::Role
@@ -142,9 +147,12 @@ Resources:
       Handler: index.handler
       Role: !GetAtt FrontHandlerRole.Arn
       Timeout: 120
+      TracingConfig:
+        Mode: Active
       Environment:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
+          AWS_ENDPOINT_URL: http://localhost.localstack.cloud:4566
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: front-handler.zip
