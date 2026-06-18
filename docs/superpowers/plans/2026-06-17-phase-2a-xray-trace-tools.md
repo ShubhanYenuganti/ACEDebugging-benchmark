@@ -33,7 +33,7 @@
   - `ace_get_trace.handler({ trace_id }) -> { trace_id, segments: [{ name, origin, error, fault, throttle, http_status, duration, subsegments: [{ name, namespace, error, fault, http_status, aws_operation }] }] } | { error, error_type }`
 - Consumes (in tests): `PutTraceSegmentsCommand` from `@aws-sdk/client-xray` to seed data (proven to round-trip on this build).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `tests/test_mcp_server.js` (after the `ace_lookup_events` tests). First add an import for seeding at the top with the other `@aws-sdk` imports:
 
@@ -99,12 +99,12 @@ test("ace_get_trace: round-trips a seeded segment with subsegment", async () => 
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test tests/test_mcp_server.js 2>&1 | grep -A2 "trace"`
 Expected: FAIL — `ace_get_trace_summaries` / `ace_get_trace` not found in `observeTracingTools` (the membership test fails; handler calls throw on undefined).
 
-- [ ] **Step 3: Implement the two tools**
+- [x] **Step 3: Implement the two tools**
 
 In `harness/mcp_server/tools/observe_tracing.js`, extend the import line and add the client below the existing CloudTrail client:
 
@@ -213,18 +213,18 @@ Then add these two objects to the `observeTracingTools` array (after the `ace_lo
   },
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test tests/test_mcp_server.js 2>&1 | tail -15`
 Expected: all tests pass (`# pass` count increased by 5, `# fail 0`). The seeded round-trip test passes if LocalStack X-Ray is reachable; it self-tolerates an `error` return otherwise.
 
-- [ ] **Step 5: Confirm agent exposure (no allow-list change needed)**
+- [x] **Step 5: Confirm agent exposure (no allow-list change needed)**
 
 Run: `python -c "from harness.agent.tools import filter_model_tools" 2>&1; echo "import ok"`
 Then verify the tools are observe-class by confirming they are NOT in any score filter. Run: `grep -n "ace_verify_fix\|ace_score_run\|ace_get_trace" harness/agent/tools.py`
 Expected: only `ace_verify_fix`/`ace_score_run` appear in filter logic; `ace_get_trace*` do not (they pass through automatically).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add harness/mcp_server/tools/observe_tracing.js tests/test_mcp_server.js
