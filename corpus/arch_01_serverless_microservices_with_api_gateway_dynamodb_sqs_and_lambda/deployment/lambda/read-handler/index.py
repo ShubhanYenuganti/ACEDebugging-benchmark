@@ -4,6 +4,8 @@ from decimal import Decimal
 
 import boto3
 
+from xray_instrument import traced
+
 table = boto3.resource("dynamodb").Table(os.environ["FRIEND_TABLE"])
 
 
@@ -21,6 +23,7 @@ def _response(status, body):
     }
 
 
+@traced("ReadHandlerFunction")
 def handler(event, context):
     params = event.get("pathParameters") or {}
     player_id = params.get("playerId")

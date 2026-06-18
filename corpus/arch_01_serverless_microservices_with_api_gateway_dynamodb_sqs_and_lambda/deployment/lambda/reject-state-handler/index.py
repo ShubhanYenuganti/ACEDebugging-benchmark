@@ -3,6 +3,8 @@ import os
 import boto3
 from botocore.exceptions import ClientError
 
+from xray_instrument import traced
+
 table = boto3.resource("dynamodb").Table(os.environ["FRIEND_TABLE"])
 
 
@@ -23,6 +25,7 @@ def _delete_reverse(player_id, friend_id):
             raise
 
 
+@traced("RejectStateHandlerFunction")
 def handler(event, context):
     failures = []
     for record in event.get("Records", []):
