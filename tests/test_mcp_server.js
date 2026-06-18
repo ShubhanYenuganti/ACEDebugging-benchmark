@@ -1042,7 +1042,7 @@ test("ace_get_lambda_metrics clamps window_minutes to 60", async () => {
 // === CloudTrail Tracing ===
 test("observe_tracing exports an array with the CloudTrail tool", () => {
   assert.ok(Array.isArray(observeTracingTools));
-  assert.equal(observeTracingTools.length, 1);
+  assert.equal(observeTracingTools.length, 3);
   assert.ok(observeTracingTools.some((t) => t.name === "ace_lookup_events"));
 });
 
