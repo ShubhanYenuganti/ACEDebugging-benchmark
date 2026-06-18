@@ -1,5 +1,11 @@
-"""Emission gate: deploy arch01 known_good, run traffic, assert a trace with a
-DynamoDB subsegment is visible via the X-Ray tools. Run against a live LocalStack.
+"""Emission gate: deploy arch01 known_good, run traffic, assert the
+FrontHandlerFunction trace shows a DynamoDB call as a *nested subsegment*
+(with aws_operation) via the X-Ray tools. Run against a live LocalStack.
+
+Strict criterion: ace_get_trace on the front-handler trace must return the
+FrontHandlerFunction segment containing a subsegment whose aws_operation is a
+DynamoDB call (e.g. PutItem/UpdateItem). A flat sibling "dynamodb" segment is
+NOT acceptable and triggers a loud WARNING + failure.
 """
 import json
 import subprocess
@@ -52,31 +58,39 @@ def main():
     seg_names = [s["name"] for s in front_handler_trace["segments"]]
     print("segment names in trace:", seg_names)
 
-    # On real AWS, patch_all attaches DynamoDB calls as subsegments of the
-    # handler segment. On LocalStack the DynamoDB service records them as a
-    # sibling segment in the same trace. Either shape proves patch_all worked
-    # and that trace-context propagation is functioning.
+    # STRICT criterion: the FrontHandlerFunction segment must contain a
+    # subsegment whose aws_operation is a DynamoDB call. This is the real-AWS
+    # X-Ray shape and is what justifies the trace tools (operation-level signal).
     front_seg = next(s for s in front_handler_trace["segments"] if s["name"] == "FrontHandlerFunction")
-    has_ddb_subsegment = any(
-        s.get("aws_operation") for s in front_seg["subsegments"]
-    )
+    ddb_subsegments = [
+        s for s in front_seg["subsegments"]
+        if s.get("aws_operation") and s["name"].lower() in ("dynamodb", "amazon dynamodb")
+    ]
+
+    if ddb_subsegments:
+        ops = [s["aws_operation"] for s in ddb_subsegments]
+        print(f"DynamoDB captured as subsegment(s) of FrontHandlerFunction — aws_operation={ops}")
+        print("EMISSION GATE PASSED")
+        return
+
+    # FALLBACK (documented, NOT a silent pass): some LocalStack builds flatten
+    # subsegments into bare sibling segments named "dynamodb" with no
+    # aws_operation. That loses the operation-level signal. We still detect it,
+    # but loudly, because it means the strict criterion is NOT met.
     has_ddb_sibling = any(
         s["name"].lower() in ("dynamodb", "amazon dynamodb")
         for s in front_handler_trace["segments"]
         if s["name"] != "FrontHandlerFunction"
     )
+    if has_ddb_sibling:
+        print("WARNING: DynamoDB appeared only as a FLAT SIBLING segment, not a "
+              "nested subsegment of FrontHandlerFunction. The strict gate criterion "
+              "(subsegment with aws_operation) is NOT met — operation-level signal lost.")
 
-    assert has_ddb_subsegment or has_ddb_sibling, (
-        "No DynamoDB subsegment or sibling segment found — patch_all not capturing hops. "
-        f"Segments: {seg_names}, subsegments: {front_seg['subsegments']}"
+    raise AssertionError(
+        "STRICT GATE FAILED: FrontHandlerFunction has no DynamoDB subsegment with "
+        f"aws_operation. Segments: {seg_names}, subsegments: {front_seg['subsegments']}"
     )
-
-    if has_ddb_subsegment:
-        print("DynamoDB captured as subsegment (real-AWS shape)")
-    else:
-        print("DynamoDB captured as sibling segment (LocalStack shape — patch_all propagated trace context)")
-
-    print("EMISSION GATE PASSED")
 
 
 if __name__ == "__main__":

@@ -6,10 +6,23 @@ segment to LocalStack via PutTraceSegments (the proven emission path on this
 build). Handler-facing usage (`@traced(...)` + patch_all) matches real-AWS
 X-Ray instrumentation; only the emitter is environment-specific.
 
-LocalStack sets LAMBDA_TASK_ROOT which makes the aws-xray-sdk switch to
-LambdaContext (a no-op context that discards explicit segments). We bypass
-that by explicitly passing a plain Context() to configure(), which overrides
-the auto-detected LambdaContext.
+Two LocalStack-specific quirks are handled here:
+
+1. LocalStack sets LAMBDA_TASK_ROOT, which makes the aws-xray-sdk switch to
+   LambdaContext (a no-op context that discards explicit segments). We bypass
+   that by explicitly passing a plain Context() to configure(), which
+   overrides the auto-detected LambdaContext.
+
+2. The same Lambda detection sets streaming_threshold=0 in the recorder's
+   __init__. With threshold 0, every downstream subsegment is *streamed out*
+   as an independent trace document the instant it closes (via
+   _stream_subsegment_out -> send_entity), so the parent segment serializes
+   with zero embedded subsegments and LocalStack records each DynamoDB call as
+   a flat sibling segment that loses its aws_operation. Setting a high
+   streaming_threshold keeps subsegments embedded in the parent segment, which
+   is the shape this LocalStack build nests correctly (preserving
+   aws_operation). The emitter additionally skips subsegment-type entities as
+   defense-in-depth so a subsegment can never be PUT as a standalone document.
 """
 import os
 import boto3
@@ -24,10 +37,18 @@ _xray_client = boto3.client(
 
 
 class PutSegmentsEmitter(UDPEmitter):
-    """Emit finished entities via the X-Ray API instead of UDP to a daemon."""
+    """Emit finished entities via the X-Ray API instead of UDP to a daemon.
+
+    Only top-level Segments are emitted. Subsegments must stay embedded in
+    their parent segment's serialization; emitting one as a standalone
+    document makes LocalStack flatten it into a sibling segment and drop its
+    aws_operation.
+    """
 
     def send_entity(self, entity):
         try:
+            if getattr(entity, "type", None) == "subsegment":
+                return
             self._xray = _xray_client
             self._xray.put_trace_segments(TraceSegmentDocuments=[entity.serialize()])
         except Exception:
@@ -43,6 +64,9 @@ xray_recorder.configure(
     # LocalStack sets LAMBDA_TASK_ROOT, causing the SDK to auto-select
     # LambdaContext on init. Passing context= here wins over that detection.
     context=Context(),
+    # Keep subsegments embedded in the parent segment instead of streaming
+    # them out as independent documents (LocalStack init sets this to 0).
+    streaming_threshold=1000,
 )
 patch_all()
 
