@@ -250,7 +250,7 @@ This is the de-risking gate. It builds the shared instrumentation module, vendor
   - `traced(name: str) -> Callable` wraps `def handler(event, context)`.
 - Consumes: Task 1's `ace_get_trace` / `ace_get_trace_summaries` (used by the validation script to confirm emission).
 
-- [ ] **Step 1: Write the shared instrumentation module**
+- [x] **Step 1: Write the shared instrumentation module**
 
 Create `corpus/arch_01_.../deployment/lambda/_shared/xray_instrument.py`:
 
@@ -315,7 +315,7 @@ def traced(name):
     return decorator
 ```
 
-- [ ] **Step 2: Instrument the front handler**
+- [x] **Step 2: Instrument the front handler**
 
 In `corpus/arch_01_.../deployment/lambda/front-handler/index.py`, add the import after the existing imports and wrap the handler. The module is co-located in the package (vendored in Step 4), so import is flat:
 
@@ -330,7 +330,7 @@ Change the handler signature line from `def handler(event, context):` to:
 def handler(event, context):
 ```
 
-- [ ] **Step 3: Add TracingConfig + X-Ray IAM perms to known_good.yaml (front handler only, for the gate)**
+- [x] **Step 3: Add TracingConfig + X-Ray IAM perms to known_good.yaml (front handler only, for the gate)**
 
 In `corpus/arch_01_.../known_good.yaml`, add to the `FrontHandlerFunction` resource `Properties:`:
 
@@ -349,7 +349,7 @@ And to the IAM role used by the front handler, add an inline policy statement gr
             Resource: "*"
 ```
 
-- [ ] **Step 4: Add the vendoring dependency and script**
+- [x] **Step 4: Add the vendoring dependency and script**
 
 Add `aws-xray-sdk` to `pyproject.toml` dependencies (the `dependencies = [...]` array):
 
@@ -381,7 +381,7 @@ chmod +x scripts/vendor_xray.sh
 scripts/vendor_xray.sh corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/deployment/lambda/front-handler
 ```
 
-- [ ] **Step 5: Write the emission validation script**
+- [x] **Step 5: Write the emission validation script**
 
 Create `scripts/validate_xray_emission.py`:
 
@@ -436,7 +436,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 6: Run the gate**
+- [x] **Step 6: Run the gate**
 
 Deploy arch01 and drive traffic, then validate. Using the existing corpus validation flow:
 
@@ -453,7 +453,7 @@ Expected: `EMISSION GATE PASSED`, with the front handler segment showing at leas
 
 **If it fails** (no traces / no subsegments): the emitter or packaging is wrong. Diagnose in this order: (a) confirm `aws_xray_sdk` imports inside the Lambda (`ace_get_log_tail` on the front handler for ImportError); (b) confirm the handler role has `xray:PutTraceSegments` (CloudWatch logs / `ace_filter_log_events` for AccessDenied); (c) confirm `AWS_ENDPOINT_URL` is set in the Lambda env or the fallback host resolves. Fix and re-run before proceeding.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add corpus/arch_01_*/deployment/lambda/_shared/xray_instrument.py \
@@ -713,3 +713,4 @@ git commit -m "docs: document X-Ray trace tools and arch01 instrumentation (58 t
 - **Sequencing note:** the spec listed the emission gate as Step 1; this plan builds the tools first (Task 1) so they serve as the verification instrument for the gate (Task 2). Corpus fan-out (Tasks 3–5) still occurs only after the gate passes, preserving the spec's de-risking intent.
 - **Type consistency:** tool output keys (`traces`/`segments`/`subsegments`, `aws_operation`, `has_fault`/`fault`) are used identically in the tool code, tests, and validation script. `traced(name)` signature is consistent across Tasks 2–5.
 - **Known residual risk:** Task 5 Step 4 carries an explicit fallback if LocalStack does not capture errors inside subsegments — the only place the trace-diagnosable premise could break, gated by Task 2's subsegment-fidelity check.
+- **Task 2 finding (MANDATORY for Tasks 3–5):** LocalStack's Lambda detection sets the X-Ray recorder's `streaming_threshold` to `0`, which streams each subsegment out as an independent document the instant it closes — leaving the parent segment empty and making LocalStack flatten downstream calls into flat sibling segments that lose `aws_operation`. `xray_instrument.py` fixes this with `streaming_threshold=1000` (keep subsegments embedded) plus a `send_entity` guard that skips subsegment-type entities. The emission gate now passes the STRICT criterion: `ace_get_trace` on the front-handler trace returns `FrontHandlerFunction` with a nested `dynamodb` subsegment carrying `aws_operation=PutItem`. Tasks 3–5 must use this same `_shared/xray_instrument.py` unchanged. Note: `vendor_xray.sh` is non-deterministic about pulling `botocore` (Lambda runtime already provides it) — the committed front-handler intentionally vendors only `aws_xray_sdk`/`wrapt`/`six`, which is sufficient.
