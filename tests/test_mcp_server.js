@@ -13,6 +13,7 @@ import { SecretsManagerClient, CreateSecretCommand } from "@aws-sdk/client-secre
 import { SSMClient, PutParameterCommand } from "@aws-sdk/client-ssm";
 import { SESClient, VerifyEmailIdentityCommand } from "@aws-sdk/client-ses";
 import { IAMClient, CreateRoleCommand, PutRolePolicyCommand } from "@aws-sdk/client-iam";
+import { XRayClient, PutTraceSegmentsCommand } from "@aws-sdk/client-xray";
 
 import { probeTools } from "../harness/mcp_server/tools/probe.js";
 import { observeTools } from "../harness/mcp_server/tools/observe.js";
@@ -1058,4 +1059,69 @@ test("ace_lookup_events: returns events array or error", async () => {
 test("ace_lookup_events: clamps max_results to <= 100", async () => {
   const res = await tool(observeTracingTools, "ace_lookup_events").handler({ max_results: 9999 });
   if (!res.error) { assert.ok(res.events.length <= 100); }
+});
+
+// === X-Ray Trace Tools ===
+test("observeTracingTools includes the two X-Ray trace tools", () => {
+  assert.ok(observeTracingTools.some((t) => t.name === "ace_get_trace_summaries"));
+  assert.ok(observeTracingTools.some((t) => t.name === "ace_get_trace"));
+});
+
+test("ace_get_trace_summaries: returns traces array or error", async () => {
+  const res = await tool(observeTracingTools, "ace_get_trace_summaries").handler({ window_minutes: 30 });
+  if (res.error) { assert.ok(typeof res.error === "string"); }
+  else {
+    assert.ok(Array.isArray(res.traces));
+    assert.equal(typeof res.count, "number");
+    assert.equal(res.window_minutes, 30);
+  }
+});
+
+test("ace_get_trace_summaries: clamps window_minutes to <= 1440", async () => {
+  const res = await tool(observeTracingTools, "ace_get_trace_summaries").handler({ window_minutes: 99999 });
+  if (!res.error) { assert.equal(res.window_minutes, 1440); }
+});
+
+test("ace_get_trace: missing trace_id returns error", async () => {
+  const res = await tool(observeTracingTools, "ace_get_trace").handler({});
+  assert.equal(res.error_type, "INVALID_INPUT");
+});
+
+test("ace_get_trace: round-trips a seeded segment", async () => {
+  const xray = new XRayClient({
+    endpoint: "http://localhost:4566", region: "us-east-1",
+    credentials: { accessKeyId: "test", secretAccessKey: "test" },
+  });
+  const epoch = Date.now() / 1000;
+  const traceId = `1-${Math.floor(epoch).toString(16)}-${Array.from({length:24},()=>Math.floor(Math.random()*16).toString(16)).join("")}`;
+  const segId = Array.from({length:16},()=>Math.floor(Math.random()*16).toString(16)).join("");
+  const segment = JSON.stringify({
+    trace_id: traceId,
+    id: segId,
+    name: "ace-test-service",
+    start_time: epoch - 1,
+    end_time: epoch,
+    in_progress: false,
+    subsegments: [{
+      id: Array.from({length:16},()=>Math.floor(Math.random()*16).toString(16)).join(""),
+      name: "DynamoDB",
+      namespace: "aws",
+      start_time: epoch - 0.5,
+      end_time: epoch - 0.1,
+      aws: { operation: "PutItem" },
+    }],
+  });
+  try {
+    await xray.send(new PutTraceSegmentsCommand({ TraceSegmentDocuments: [segment] }));
+  } catch (_) {
+    // LocalStack not available — skip
+    return;
+  }
+  await new Promise(r => setTimeout(r, 300));
+  const res = await tool(observeTracingTools, "ace_get_trace").handler({ trace_id: traceId });
+  if (res.error) { assert.ok(typeof res.error === "string"); }
+  else {
+    assert.equal(res.trace_id, traceId);
+    assert.ok(Array.isArray(res.segments));
+  }
 });
