@@ -1,0 +1,34 @@
+{
+  "fault_id": "arch02_fault11",
+  "fault_class": "connectivity",
+  "architecture": "arch_02_serverless_api_with_rds_postgres",
+  "scenario_id": "arch02_fault11_connectivity",
+  "target_resource": "ApiHandlerFunction",
+  "target_property": "Properties.Environment.Variables.DB_PORT",
+  "injected_value": "'5433'",
+  "original_value": "!GetAtt OrdersDb.Endpoint.Port",
+  "valid_fixes": [
+    "Restore ApiHandlerFunction env DB_PORT to !GetAtt OrdersDb.Endpoint.Port so the Lambda connects to the real RDS port"
+  ],
+  "invalid_patches": [
+    "Open DbSecurityGroup ingress to 0.0.0.0/0",
+    "Change RDS port to 5433 to match the wrong env var",
+    "Remove VpcConfig from Lambda to bypass networking"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": [
+    "ace_get_stack_outputs(ace-bench-stack) → reveals DbInstanceId and ApiBaseUrl",
+    "ace_get_environment_variables(ace-bench-stack-api-handler) → shows DB_PORT=5433 vs real RDS port",
+    "ace_describe_db_instance(ace-bench-stack-orders-db) → shows Endpoint.Port=5432; mismatch with DB_PORT env var confirms root cause"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'order_created' (POST /orders returns 201) fails; Lambda logs show connection refused or timeout on port 5433",
+  "observable_symptom": "POST /orders returns 502 or 500 on every request. Lambda logs show a database connection error — the handler attempts to connect on a port where no PostgreSQL server is listening. The RDS instance itself is healthy and its actual endpoint is reachable on the correct port.",
+  "root_cause": "The Lambda function's DB_PORT environment variable is hardcoded to 5433 instead of being resolved dynamically from the RDS endpoint. PostgreSQL listens on port 5432. Every invocation fails immediately with a connection refused error before any query is attempted.",
+  "corpus_path": "corpus/arch_02_serverless_api_with_rds_postgres",
+  "functional_test_path": "corpus/arch_02_serverless_api_with_rds_postgres/functional_test.py",
+  "known_good_path": "corpus/arch_02_serverless_api_with_rds_postgres/known_good.yaml"
+}
