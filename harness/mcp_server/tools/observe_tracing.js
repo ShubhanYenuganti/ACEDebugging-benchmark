@@ -69,7 +69,7 @@ export const observeTracingTools = [
   {
     name: "ace_get_trace_summaries",
     description:
-      "X-Ray GetTraceSummaries: list recent traces over a window with error/fault/throttle flags, to find which requests had errors or high latency; then call ace_get_trace for the full segment tree. Optional X-Ray filter_expression (e.g. 'fault = true'); only_errors is a convenience that applies 'error = true OR fault = true' when no filter_expression is given. Defaults: last 60 min. Returns nothing unless scenario handlers are X-Ray-instrumented.",
+      "X-Ray GetTraceSummaries: list recent trace summaries over a window (id, duration, response_time, http_status, entry_service), to find requests to inspect; then call ace_get_trace for the full segment tree. Defaults: last 60 min. Returns nothing unless scenario handlers are X-Ray-instrumented. NOTE: error/fault/throttle flags are NOT reliably populated at the summary level on LocalStack, and the optional filter_expression / only_errors server-side filter is NOT supported on LocalStack (it returns an error) — to find failures, list traces by window here and inspect each via ace_get_trace, whose subsegment-level error/fault flags are accurate.",
     inputSchema: {
       type: "object",
       properties: {
