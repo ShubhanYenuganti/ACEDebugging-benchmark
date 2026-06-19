@@ -7,6 +7,7 @@ import { observeTools } from "./tools/observe.js";
 import { observeExtendedTools } from "./tools/observe_extended.js";
 import { scoreTools } from "./tools/score.js";
 import { observeTracingTools } from "./tools/observe_tracing.js";
+import { probeRdsTools } from "./tools/probe_rds.js";
 
 const server = new McpServer({
   name: "ace-bench-diagnostic-mcp",
@@ -51,7 +52,7 @@ function buildZodShape(inputSchema) {
   return shape;
 }
 
-for (const tool of [...probeTools, ...probeExtendedTools, ...observeTools, ...observeExtendedTools, ...observeTracingTools, ...scoreTools]) {
+for (const tool of [...probeTools, ...probeExtendedTools, ...observeTools, ...observeExtendedTools, ...observeTracingTools, ...probeRdsTools, ...scoreTools]) {
   const shape = buildZodShape(tool.inputSchema);
   server.tool(
     tool.name,

@@ -22,6 +22,7 @@ import { scoreTools } from "../harness/mcp_server/tools/score.js";
 import { probeExtendedTools } from "../harness/mcp_server/tools/probe_extended.js";
 import { observeExtendedTools } from "../harness/mcp_server/tools/observe_extended.js";
 import { observeTracingTools } from "../harness/mcp_server/tools/observe_tracing.js";
+import { probeRdsTools } from "../harness/mcp_server/tools/probe_rds.js";
 
 const awsConfig = {
   endpoint: process.env.LOCALSTACK_ENDPOINT ?? "http://localhost:4566",
@@ -1137,4 +1138,43 @@ test("ace_get_trace: round-trips a seeded segment with subsegment", async () => 
   assert.ok(sub);
   assert.equal(sub.fault, true);
   assert.equal(sub.aws_operation, "PutItem");
+});
+
+test("probeRdsTools exposes the three RDS tools", () => {
+  for (const n of ["ace_describe_db_instance", "ace_describe_db_parameters", "ace_check_db_connectivity"]) {
+    assert.ok(tool(probeRdsTools, n), `missing ${n}`);
+  }
+});
+
+test("ace_describe_db_instance: missing identifier returns error", async () => {
+  const res = await tool(probeRdsTools, "ace_describe_db_instance").handler({});
+  assert.ok(res.error);
+});
+
+test("ace_describe_db_instance: unknown identifier returns error", async () => {
+  const res = await tool(probeRdsTools, "ace_describe_db_instance").handler({ db_instance_identifier: "nope-does-not-exist" });
+  assert.ok(res.error);
+});
+
+test("ace_describe_db_parameters: missing group returns error", async () => {
+  const res = await tool(probeRdsTools, "ace_describe_db_parameters").handler({});
+  assert.ok(res.error);
+});
+
+test("ace_check_db_connectivity: missing host returns error", async () => {
+  const res = await tool(probeRdsTools, "ace_check_db_connectivity").handler({});
+  assert.ok(res.error);
+});
+
+test("ace_check_db_connectivity: closed port reports unreachable", async () => {
+  const res = await tool(probeRdsTools, "ace_check_db_connectivity").handler({ host: "127.0.0.1", port: 1, timeout_ms: 500 });
+  assert.equal(res.reachable, false);
+  assert.ok(["refused", "timeout", "error"].includes(res.outcome));
+});
+
+test("ace_check_db_connectivity: open port reports reachable", async () => {
+  // LocalStack edge port is always listening
+  const res = await tool(probeRdsTools, "ace_check_db_connectivity").handler({ host: "127.0.0.1", port: 4566, timeout_ms: 1000 });
+  assert.equal(res.reachable, true);
+  assert.equal(res.outcome, "connected");
 });
