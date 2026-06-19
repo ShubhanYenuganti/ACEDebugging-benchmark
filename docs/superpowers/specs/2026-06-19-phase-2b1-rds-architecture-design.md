@@ -83,7 +83,7 @@ layout. Each manifest's `optimal_tool_calls` / `optimal_files_changed` /
 |----|-------|----------------|------------------------|
 | `arch02_fault01_connectivity` | connectivity | Security group missing ingress on 5432 (primary); Lambda detached from VPC (fallback if SG not enforced) | `ace_describe_security_group` + `ace_check_db_connectivity` |
 | `arch02_fault02_security` | security | `PubliclyAccessible: true` and/or `0.0.0.0/0` SG ingress | `ace_describe_db_instance` + `ace_describe_security_group` |
-| `arch02_fault03_data_correctness` | credentials | Wrong secret ARN wired to Lambda, or missing `secretsmanager:GetSecretValue` IAM permission | `ace_describe_secret` / `ace_get_secret` + `ace_simulate_policy` + logs |
+| `arch02_fault03_credentials` | credentials | Wrong secret ARN wired to Lambda, or missing `secretsmanager:GetSecretValue` IAM permission | `ace_describe_secret` / `ace_get_secret` + `ace_simulate_policy` + logs |
 | `arch02_fault04_performance` | performance | Parameter-group `max_connections` too low → connection exhaustion (primary); undersized instance class + CloudWatch signal (fallback) | `ace_describe_db_parameters` + `ace_get_metric_statistics` |
 
 Scope is deliberately **4 scenarios** for the first build; expansion (more faults
