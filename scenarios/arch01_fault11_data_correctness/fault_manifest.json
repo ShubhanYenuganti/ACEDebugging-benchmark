@@ -1,0 +1,33 @@
+{
+  "fault_id": "arch01_fault11",
+  "fault_class": "data_correctness",
+  "architecture": "arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "scenario_id": "arch01_fault11_data_correctness",
+  "baseline_idempotent": true,
+  "target_resource": "RequestStateHandlerFunction",
+  "target_property": "Properties.Environment.Variables.FRIEND_TABLE",
+  "injected_value": "Friend-nonexistent",
+  "original_value": "!Ref FriendTable",
+  "valid_fixes": [
+    "Restore RequestStateHandlerFunction.Properties.Environment.Variables.FRIEND_TABLE to !Ref FriendTable so the handler writes the receiver-side Pending record to the correct DynamoDB table"
+  ],
+  "invalid_patches": [
+    "Change FRIEND_TABLE to the literal stack-resolved table name (e.g. ace-bench-stack-friend) as a hardcoded string — functionally works but is fragile and not idiomatic CloudFormation",
+    "Add a second DynamoDB table named Friend-nonexistent — creates an unintended resource rather than fixing the misconfiguration"
+  ],
+  "optimal_tool_calls": 2,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 1,
+  "optimal_diagnostic_path": [
+    "ace_get_trace_summaries(window_minutes=30) → lists recent traces; RequestStateHandlerFunction traces are present",
+    "ace_get_trace(trace_id=<RequestStateHandler trace id>) → shows the RequestStateHandlerFunction segment containing a DynamoDB PutItem subsegment with error=true, fault=true, http_status=400, pinpointing the failing downstream call; cross-reference with ace_get_environment_variables(function=RequestStateHandlerFunction) to confirm FRIEND_TABLE=Friend-nonexistent points to a nonexistent table"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "pending_record_created",
+  "observable_symptom": "After a Request action, the receiver-side Pending record is never written to DynamoDB. The pending_record_created assertion fails: wait_for_state(table, friend_id, player_id, Pending) times out. RequestStateHandlerFunction is invoked (stream event triggers it) but its downstream PutItem call raises ResourceNotFoundException against a nonexistent table.",
+  "root_cause": "RequestStateHandlerFunction.Properties.Environment.Variables.FRIEND_TABLE is set to the literal string 'Friend-nonexistent' instead of !Ref FriendTable. The handler reads this env var at cold-start to create a DynamoDB resource handle pointing to a table that does not exist. Every PutItem call in _create_pending() raises ResourceNotFoundException, which is caught and re-raised (since it is not a ConditionalCheckFailedException), causing the handler to return a batchItemFailures list. The X-Ray trace captures the failed PutItem as a faulted subsegment (error=true, fault=true, http_status=400), pinpointing the wrong table name via ace_get_environment_variables.",
+  "corpus_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda",
+  "functional_test_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/functional_test.py",
+  "known_good_path": "corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/known_good.yaml"
+}
