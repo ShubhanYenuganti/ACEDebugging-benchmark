@@ -30,14 +30,14 @@ The model never sees `fault_manifest.json` or `known_good.yaml`. It only sees th
 | Phase | What it builds | Status |
 |-------|---------------|--------|
 | **A** | Shared Python utilities (LocalStack client, cfn-lint runner, file differ, result logger) | ✅ Complete — covered by `tests/test_shared.py` |
-| **B** | Diagnostic MCP server with 56 tools (54 diagnostic + 2 score): 6 probe, 22 probe-ext, 6 observe, 21 observe-ext, 1 observe-tracing, 2 score | ✅ Complete — 126/126 Node tests passing |
+| **B** | Diagnostic MCP server with 58 tools (56 diagnostic + 2 score): 6 probe, 22 probe-ext, 6 observe, 21 observe-ext, 3 observe-tracing, 2 score | ✅ Complete — 132 Node tests passing |
 | **C** | Scenario runner + deployment handler (deploy faulted template, intercept fix submission) | ✅ Complete — 27 Python test functions |
 | **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | ✅ Complete — 2 Python test functions |
 | **E** | Harness entry point `run.py` — ties all phases together end-to-end | ✅ Complete — 1 E2E Python test function |
 | **F** | Autonomous scoring agent — Claude Sonnet scores 5 dimensions, writes `score.json` | ✅ Complete — 21 Python test functions |
 | **G** | Inline agent runner — LiteLLM universal adapter, drives any model end-to-end | ✅ Complete — 42 Python test functions |
 
-Current direct test inventory: 126 Python `def test_*` functions across `tests/*.py` plus 126 Node MCP test cases in `tests/test_mcp_server.js`.
+Current direct test inventory: 126 Python `def test_*` functions across `tests/*.py` plus 132 Node MCP test cases in `tests/test_mcp_server.js`.
 
 ---
 
@@ -119,7 +119,7 @@ ace-bench/
 │   │   ├── file_differ.py          # snapshot + diff for deployment dir
 │   │   ├── result_logger.py        # thread-safe JSON result writer
 │   │   └── template_parser.py      # extract S3Key stems from CloudFormation YAML
-│   ├── mcp_server/           # Phase B — Node.js MCP server (54 diagnostic + 2 score tools, 27 services)
+│   ├── mcp_server/           # Phase B — Node.js MCP server (56 diagnostic + 2 score tools, 27 services)
 │   │   ├── index.js                # McpServer + StdioTransport, spreads all 6 tool arrays
 │   │   ├── package.json
 │   │   └── tools/
@@ -127,7 +127,7 @@ ace-bench/
 │   │       ├── probe_extended.js   # 22 extended probe tools
 │   │       ├── observe.js          # 6 core observe tools
 │   │       ├── observe_extended.js # 21 extended observe tools
-│   │       ├── observe_tracing.js  # 1 tool: ace_lookup_events (CloudTrail); X-Ray deferred to next phase
+│   │       ├── observe_tracing.js  # 3 tools: ace_lookup_events (CloudTrail) + ace_get_trace_summaries/ace_get_trace (X-Ray)
 │   │       └── score.js            # 2 gated score tools
 │   ├── runner/               # Phase C — Scenario runner
 │   │   ├── context_builder.py      # build_context: reads scenario files, guards manifest
@@ -186,7 +186,7 @@ ace-bench/
 
 ## MCP Diagnostic Tools
 
-56 tools across 27 LocalStack services (54 diagnostic + 2 score). The model under evaluation sees 54 — score tools are filtered out at the agent layer. Requires LocalStack **Ultimate** license; IAM enforcement (`ENFORCE_IAM=1 IAM_SOFT_MODE=0`) must be active. A new CloudTrail tool (`ace_lookup_events`) surfaces recent API-call history. X-Ray trace tools are planned for a future phase.
+58 tools across 27 LocalStack services (56 diagnostic + 2 score). The model under evaluation sees 56 — score tools are filtered out at the agent layer. Requires LocalStack **Ultimate** license; IAM enforcement (`ENFORCE_IAM=1 IAM_SOFT_MODE=0`) must be active. A CloudTrail tool (`ace_lookup_events`) surfaces recent API-call history, and X-Ray trace tools (`ace_get_trace_summaries`, `ace_get_trace`) expose the distributed-trace segment tree. The X-Ray tools return data only for X-Ray-instrumented architectures: arch01 is instrumented via `aws-xray-sdk` (`xray_instrument.py`); other architectures are not yet instrumented.
 
 ### Probe tools — active inspection (6)
 
@@ -263,11 +263,13 @@ ace-bench/
 | `ace_get_stack_events` | CloudFormation stack event history with optional FAILED filter |
 | `ace_get_lambda_metrics` | Lambda invocations, errors, throttles, and duration summary |
 
-### Tracing observe tools — API-call history (1)
+### Tracing observe tools — API-call history & X-Ray traces (3)
 
 | Tool | Description |
 |------|-------------|
-| `ace_lookup_events` | CloudTrail LookupEvents — recent API-call history (event name, source, resources, error_code/message). X-Ray trace tools are deferred to a future phase. |
+| `ace_lookup_events` | CloudTrail LookupEvents — recent API-call history (event name, source, resources, error_code/message). |
+| `ace_get_trace_summaries` | X-Ray GetTraceSummaries — list recent trace summaries over a window (id, duration, error/fault/throttle flags, entry service). Note: on LocalStack the `only_errors`/`filter_expression` server-side filter is **not implemented** (returns an error) and summary-level `has_fault`/`has_error` are not populated — list traces with `window_minutes` and inspect them via `ace_get_trace`. |
+| `ace_get_trace` | X-Ray BatchGetTraces — full segment tree for one trace id; per-segment + per-subsegment `error`/`fault`/`http_status` and the downstream `aws_operation`. Returns data only for X-Ray-instrumented handlers (arch01 via `aws-xray-sdk`). |
 
 ### Score tools — harness only (2)
 

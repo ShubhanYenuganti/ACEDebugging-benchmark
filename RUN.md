@@ -146,7 +146,7 @@ When `--model` is provided:
 1. The harness deploys the faulted scenario and prints context as usual.
 2. A daemon thread starts `run_agent_loop`, which:
    - Spawns the Node.js MCP server as a stdio subprocess (no manual registration needed).
-   - Discovers all 56 MCP tools at runtime (54 diagnostic + 2 score; see tool inventory below).
+   - Discovers all 58 MCP tools at runtime (56 diagnostic + 2 score; see tool inventory below).
    - Filters out score tools (`ace_verify_fix`, `ace_score_run`) so the model cannot call them.
    - Adds Python-native file tools (`read_file`, `write_file`, `list_directory`, `submit_fix`).
    - Loops calling the LLM up to 50 turns (default), dispatching tool calls each turn.
@@ -162,7 +162,7 @@ If the agent thread crashes (auth error, network failure, etc.), the harness exi
 
 #### MCP diagnostic tool inventory
 
-The MCP server exposes 56 tools across 27 LocalStack services (54 diagnostic + 2 score). The model has access to 54 (score tools are filtered out).
+The MCP server exposes 58 tools across 27 LocalStack services (56 diagnostic + 2 score). The model has access to 56 (score tools are filtered out).
 
 **Core probe tools (6)** — `probe.js`:
 `ace_invoke_endpoint`, `ace_invoke_lambda`, `ace_check_queue_depth`, `ace_read_table_item`, `ace_check_event_source`, `ace_check_s3_object`
@@ -176,8 +176,9 @@ The MCP server exposes 56 tools across 27 LocalStack services (54 diagnostic + 2
 **Extended observe tools (21)** — `observe_extended.js`:
 `ace_get_sns_topic`, `ace_get_eventbridge_rule`, `ace_get_schedule`, `ace_describe_state_machine`, `ace_describe_swf_domain`, `ace_get_ses_identity`, `ace_describe_security_group`, `ace_list_dns_records`, `ace_get_resolver_endpoint`, `ace_describe_kinesis_stream`, `ace_describe_firehose_stream`, `ace_describe_dynamo_stream`, `ace_describe_kms_key`, `ace_describe_secret`, `ace_describe_parameters`, `ace_get_public_access_block`, `ace_get_metric_statistics`, `ace_get_s3_object_content`, `ace_filter_log_events`, `ace_get_stack_events`, `ace_get_lambda_metrics`
 
-**Tracing observe tools (1)** — `observe_tracing.js`:
-`ace_lookup_events` (CloudTrail LookupEvents — recent API-call history; X-Ray tools deferred to a future phase)
+**Tracing observe tools (3)** — `observe_tracing.js`:
+`ace_lookup_events` (CloudTrail LookupEvents — recent API-call history), `ace_get_trace_summaries` (X-Ray GetTraceSummaries — recent trace summaries over a window), `ace_get_trace` (X-Ray BatchGetTraces — full segment/subsegment tree with per-hop error/fault and `aws_operation`).
+X-Ray tools return data only for X-Ray-instrumented architectures: arch01 handlers are instrumented via `aws-xray-sdk` (`xray_instrument.py`); other architectures are not yet. `ace_get_service_graph` is intentionally not provided (non-functional on LocalStack). Note: `ace_get_trace_summaries`' `only_errors`/`filter_expression` server-side filter is not implemented on LocalStack — list traces by window and inspect each via `ace_get_trace`.
 
 **Score tools (2, harness-only)** — `score.js`:
 `ace_verify_fix`, `ace_score_run`

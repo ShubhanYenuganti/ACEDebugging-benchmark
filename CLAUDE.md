@@ -111,7 +111,7 @@ ace-bench/
 │   │   ├── cfn_lint_runner.py
 │   │   ├── file_differ.py
 │   │   └── result_logger.py
-│   ├── mcp_server/               # Phase B — 54 diagnostic + 2 score tools across 27 LocalStack services
+│   ├── mcp_server/               # Phase B — 56 diagnostic + 2 score tools across 27 LocalStack services
 │   │   ├── index.js              # spreads all 6 tool arrays into MCP server
 │   │   ├── package.json
 │   │   └── tools/
@@ -119,7 +119,7 @@ ace-bench/
 │   │       ├── probe_extended.js  # 22 extended probe tools (SNS→IAM sim)
 │   │       ├── observe.js         # 6 original observe tools
 │   │       ├── observe_extended.js # 21 extended observe tools (SNS→CloudWatch)
-│   │       ├── observe_tracing.js  # 1 tool: ace_lookup_events (CloudTrail); X-Ray deferred to next phase
+│   │       ├── observe_tracing.js  # 3 tools: ace_lookup_events (CloudTrail) + ace_get_trace_summaries/ace_get_trace (X-Ray)
 │   │       └── score.js           # 2 score tools
 │   ├── runner/                   # Phase C
 │   │   ├── scenario_runner.py
