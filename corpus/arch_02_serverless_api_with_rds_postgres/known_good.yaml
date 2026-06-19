@@ -149,6 +149,11 @@ Resources:
                 Action:
                   - kms:Decrypt
                 Resource: !GetAtt DbKmsKey.Arn
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
 
   # ── Lambda Function ───────────────────────────────────────────────────────
   # CORRECT: Timeout=30 (fault04 changes Timeout to 1)
@@ -160,6 +165,8 @@ Resources:
       Handler: index.handler
       Role: !GetAtt ApiHandlerRole.Arn
       Timeout: 30
+      TracingConfig:
+        Mode: Active
       VpcConfig:
         SubnetIds:
           - !Ref SubnetA

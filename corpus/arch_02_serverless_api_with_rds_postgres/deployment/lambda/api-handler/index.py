@@ -11,6 +11,13 @@ import uuid
 
 import boto3
 import psycopg2
+from aws_xray_sdk.ext.dbapi2 import XRayTracedConn
+
+# Importing xray_instrument configures the X-Ray recorder (PutSegmentsEmitter,
+# high streaming_threshold, plain Context) and calls patch_all() so the boto3
+# SecretsManager call becomes a subsegment. `traced` wraps the handler in an
+# explicit segment. Must be imported at module load.
+from xray_instrument import traced
 
 
 def _resp(status, body):
@@ -33,9 +40,13 @@ def _get_secret():
 
 
 def _open_conn():
-    """Open a fresh psycopg2 connection. Called on every invocation."""
+    """Open a fresh psycopg2 connection. Called on every invocation.
+
+    The raw connection is wrapped in XRayTracedConn so that cursors created
+    from it emit each SQL statement as an X-Ray subsegment.
+    """
     secret = _get_secret()
-    conn = psycopg2.connect(
+    raw_conn = psycopg2.connect(
         host=os.environ["DB_HOST"],
         port=int(os.environ.get("DB_PORT", "5432")),
         dbname=os.environ.get("DB_NAME", "postgres"),
@@ -43,8 +54,8 @@ def _open_conn():
         password=secret["password"],
         connect_timeout=10,
     )
-    conn.autocommit = True
-    return conn
+    raw_conn.autocommit = True
+    return XRayTracedConn(raw_conn)
 
 
 def _ensure_schema(conn):
@@ -60,6 +71,7 @@ def _ensure_schema(conn):
         )
 
 
+@traced("ApiHandlerFunction")
 def handler(event, context):
     conn = _open_conn()
     try:
