@@ -27,7 +27,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub '${AWS::StackName}-front-queue'
-      VisibilityTimeout: 600  # Increased from 300 to 600 seconds
+      VisibilityTimeout: 30
 
   StateHandleDLQ:
     Type: AWS::SQS::Queue

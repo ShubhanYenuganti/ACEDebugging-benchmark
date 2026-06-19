@@ -179,7 +179,7 @@ Resources:
         Mode: Active
       Environment:
         Variables:
-          FRIEND_TABLE: !Ref FriendTable
+          FRIEND_TABLE: friend-table
           AWS_ENDPOINT_URL: http://localhost.localstack.cloud:4566
       Code:
         S3Bucket: ace-bench-artifacts

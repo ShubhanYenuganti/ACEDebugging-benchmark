@@ -265,7 +265,9 @@ Resources:
       FunctionName: !Ref FrontHandlerFunction
       FunctionResponseTypes:
         - ReportBatchItemFailures
-      FilterCriteria: null
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"body":{"friend_action":["Accept","Reject","Unfriend"]}}'
 
   RequestStateMapping:
     Type: AWS::Lambda::EventSourceMapping
