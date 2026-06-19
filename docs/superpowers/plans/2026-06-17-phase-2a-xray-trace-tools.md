@@ -682,23 +682,23 @@ git commit -m "feat(scenarios): add arch01 X-Ray-diagnosable fault (fault11) wit
 
 **Interfaces:** none (docs only).
 
-- [ ] **Step 1: Bump tool counts and add the X-Ray tools**
+- [x] **Step 1: Bump tool counts and add the X-Ray tools**
 
 Update tool counts everywhere they appear: the MCP server now has **56 diagnostic + 2 score = 58 tools** (was 54 diagnostic + 2 score). Update:
 - `CLAUDE.md`: the `mcp_server/` header comment ("54 diagnostic + 2 score" → "56 diagnostic + 2 score"), and the `observe_tracing.js` description (now 3 tools: `ace_lookup_events` + the two X-Ray tools).
 - `README.md`: Phase B tool inventory and the Tracing observe tools section — add `ace_get_trace_summaries` and `ace_get_trace` with their `GetTraceSummaries`/`BatchGetTraces` mappings, and note the handler-instrumentation dependency.
 - `RUN.md`: tool inventory header and the Tracing observe tools list.
 
-- [ ] **Step 2: Document the instrumentation dependency**
+- [x] **Step 2: Document the instrumentation dependency**
 
 In `RUN.md` (or `README.md` Tracing section) add a short note: the X-Ray trace tools return data only for X-Ray-instrumented architectures; arch01 is instrumented via `aws-xray-sdk` (`xray_instrument.py`), other architectures are not yet (deferred to the fan-out phase). `ace_get_service_graph` is intentionally not provided (non-functional on LocalStack).
 
-- [ ] **Step 3: Verify counts are consistent**
+- [x] **Step 3: Verify counts are consistent**
 
 Run: `grep -rn "54 diagnostic\|56 diagnostic\|58 tools\|56 tools" README.md CLAUDE.md RUN.md`
 Expected: no stale "54 diagnostic" / old totals remain; counts agree across files.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md CLAUDE.md RUN.md
