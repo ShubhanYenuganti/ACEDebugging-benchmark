@@ -1,8 +1,8 @@
-# Phase 2B-1 — RDS PostgreSQL Architecture (arch02) Implementation Plan
+# Phase 2B-1 — RDS PostgreSQL Architecture (arch03) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the first breadth-track corpus architecture — a serverless app on RDS PostgreSQL (arch02) — with three new RDS MCP diagnostic tools and four behavior-manifesting fault scenarios.
+**Goal:** Build the first breadth-track corpus architecture — a serverless app on RDS PostgreSQL (arch03) — with three new RDS MCP diagnostic tools and four behavior-manifesting fault scenarios.
 
 **Architecture:** `API Gateway → Lambda (in VPC) → RDS PostgreSQL`, with Secrets Manager holding DB credentials encrypted by a customer-managed KMS CMK, and a VPC + private subnets + security group governing connectivity. Reuses arch01's serverless scaffolding (handler vendoring pattern, scenario layout, functional-test harness) with DynamoDB swapped for RDS. arch01 is untouched.
 
@@ -16,7 +16,7 @@
 - `fault_manifest.json` and `known_good.yaml` are NEVER exposed to the model.
 - **Fault design principle (mandatory):** every fault must produce an observable behavioral symptom Pass-1 functional verification detects; `scenario.md` states only the symptom, never the cause. No posture-only faults (`PubliclyAccessible`, `0.0.0.0/0`).
 - MCP tool files live in `harness/mcp_server/tools/` and are spread into `harness/mcp_server/index.js`. Each tool is `{ name, description, inputSchema, async handler(args) }` and returns a plain object (never throws).
-- Corpus dir name: `corpus/arch_02_serverless_api_with_rds_postgres/`. Scenario dirs: `scenarios/arch02_fault0N_<class>/`.
+- Corpus dir name: `corpus/arch_03_serverless_api_with_rds_postgres/`. Scenario dirs: `scenarios/arch03_fault0N_<class>/`.
 - Node MCP tests: `node --test tests/test_mcp_server.js`. Spike + corpus run against a live LocalStack (`localstack start -d`).
 
 ---
@@ -31,7 +31,7 @@ Exploratory, not TDD. Validates the architecture's fault premises on the current
 
 **Interfaces:**
 - Consumes: nothing (standalone spike).
-- Produces: a recorded decision per fault mechanism (primary vs fallback) and the arch02 X-Ray instrumentation decision, written as notes in Step 6 below. Tasks 3–4 read these notes.
+- Produces: a recorded decision per fault mechanism (primary vs fallback) and the arch03 X-Ray instrumentation decision, written as notes in Step 6 below. Tasks 3–4 read these notes.
 
 - [ ] **Step 1: Confirm LocalStack is up with IAM enforcement**
 
@@ -71,12 +71,12 @@ Append a `## Task 1 findings` section to THIS plan file with, for each of: SG/VP
 - fault01 mechanism = SG-ingress (if SG enforced) else wrong-endpoint/`VpcConfig`-removed.
 - fault04 mechanism = `max_connections` (if enforced) else instance-class/CloudWatch.
 - fault02 mechanism = KMS-Decrypt-missing (if enforced) else `GetSecretValue`-missing on role.
-- arch02 X-Ray = instrument (if capture clean and worthwhile) else defer.
+- arch03 X-Ray = instrument (if capture clean and worthwhile) else defer.
 
 Commit this plan-file update:
 ```bash
 git add docs/superpowers/plans/2026-06-19-phase-2b1-rds-architecture.md
-git commit -m "docs(plan): record arch02 spike findings and locked fault mechanisms"
+git commit -m "docs(plan): record arch03 spike findings and locked fault mechanisms"
 ```
 
 - [ ] **Step 7: Tear down the spike stack**
@@ -338,16 +338,16 @@ git commit -m "feat(mcp): add RDS diagnostic tools (describe_db_instance, descri
 
 ---
 
-## Task 3: arch02 corpus (known-good)
+## Task 3: arch03 corpus (known-good)
 
 Builds the working corpus architecture and proves it deploys clean and passes functional tests under IAM enforcement.
 
 **Files:**
-- Create: `corpus/arch_02_serverless_api_with_rds_postgres/known_good.yaml`
-- Create: `corpus/arch_02_serverless_api_with_rds_postgres/functional_test.py`
-- Create: `corpus/arch_02_serverless_api_with_rds_postgres/traffic_flow.md`
-- Create: `corpus/arch_02_serverless_api_with_rds_postgres/deployment/lambda/api-handler/index.py`
-- Create: `corpus/arch_02_serverless_api_with_rds_postgres/deployment/lambda/api-handler/db.py`
+- Create: `corpus/arch_03_serverless_api_with_rds_postgres/known_good.yaml`
+- Create: `corpus/arch_03_serverless_api_with_rds_postgres/functional_test.py`
+- Create: `corpus/arch_03_serverless_api_with_rds_postgres/traffic_flow.md`
+- Create: `corpus/arch_03_serverless_api_with_rds_postgres/deployment/lambda/api-handler/index.py`
+- Create: `corpus/arch_03_serverless_api_with_rds_postgres/deployment/lambda/api-handler/db.py`
 - Create: vendored `psycopg2` under the handler dir (see Step 3)
 
 **Interfaces:**
@@ -453,7 +453,7 @@ def handler(event, context):
 ```
 Vendor `psycopg2` (binary) and `boto3` is provided by the Lambda runtime — only vendor `psycopg2`:
 ```bash
-cd corpus/arch_02_serverless_api_with_rds_postgres/deployment/lambda/api-handler
+cd corpus/arch_03_serverless_api_with_rds_postgres/deployment/lambda/api-handler
 pip install --platform manylinux2014_x86_64 --target . --implementation cp --python-version 3.11 --only-binary=:all: psycopg2-binary
 cd -
 ```
@@ -461,7 +461,7 @@ Expected: `psycopg2/` (or `psycopg2_binary*`) appears in the handler dir.
 
 - [ ] **Step 4: Write `known_good.yaml`**
 
-Create `corpus/arch_02_serverless_api_with_rds_postgres/known_good.yaml` with these resources (correct, fault-free):
+Create `corpus/arch_03_serverless_api_with_rds_postgres/known_good.yaml` with these resources (correct, fault-free):
 - `Vpc` (`AWS::EC2::VPC`, CIDR `10.0.0.0/16`).
 - `SubnetA`, `SubnetB` (`AWS::EC2::Subnet`, `10.0.1.0/24` / `10.0.2.0/24`, AZs `us-east-1a`/`us-east-1b`).
 - `DbSubnetGroup` (`AWS::RDS::DBSubnetGroup`, both subnets).
@@ -482,7 +482,7 @@ Run:
 python -c "
 import boto3, sys
 cf=boto3.client('cloudformation',endpoint_url='http://localhost:4566',region_name='us-east-1',aws_access_key_id='test',aws_secret_access_key='test')
-body=open('corpus/arch_02_serverless_api_with_rds_postgres/known_good.yaml').read()
+body=open('corpus/arch_03_serverless_api_with_rds_postgres/known_good.yaml').read()
 cf.create_stack(StackName='ace-bench-stack',TemplateBody=body,Capabilities=['CAPABILITY_NAMED_IAM','CAPABILITY_AUTO_EXPAND'])
 w=cf.get_waiter('stack_create_complete'); w.wait(StackName='ace-bench-stack'); print('CREATE_COMPLETE')
 "
@@ -491,7 +491,7 @@ Expected: `CREATE_COMPLETE`. If it fails, inspect with `aws --endpoint-url=http:
 
 - [ ] **Step 6: Write `functional_test.py`**
 
-Create `corpus/arch_02_serverless_api_with_rds_postgres/functional_test.py` mirroring arch01's harness. Primary assertions:
+Create `corpus/arch_03_serverless_api_with_rds_postgres/functional_test.py` mirroring arch01's harness. Primary assertions:
 ```python
 # pseudo-structure — full code:
 import json, sys, time, uuid
@@ -540,19 +540,19 @@ Write the complete file (expand the pseudo-structure into real code; no placehol
 
 - [ ] **Step 7: Run the functional test against the deployed known-good**
 
-Run: `python corpus/arch_02_serverless_api_with_rds_postgres/functional_test.py`
+Run: `python corpus/arch_03_serverless_api_with_rds_postgres/functional_test.py`
 Expected: `ASSERT pass order_created`, `ASSERT pass order_readback`, `ASSERT pass db_available_secondary`. All primary assertions pass — instrumentation/structure does not change behavior.
 
 - [ ] **Step 8: Write `traffic_flow.md`**
 
-Create `corpus/arch_02_serverless_api_with_rds_postgres/traffic_flow.md` describing: client → API Gateway → VPC Lambda → (Secrets Manager GetSecretValue, decrypted via KMS CMK) → psycopg2 TCP 5432 → RDS Postgres; and the read path. One short paragraph per hop.
+Create `corpus/arch_03_serverless_api_with_rds_postgres/traffic_flow.md` describing: client → API Gateway → VPC Lambda → (Secrets Manager GetSecretValue, decrypted via KMS CMK) → psycopg2 TCP 5432 → RDS Postgres; and the read path. One short paragraph per hop.
 
 - [ ] **Step 9: Tear down + commit**
 
 ```bash
 python -c "import boto3;cf=boto3.client('cloudformation',endpoint_url='http://localhost:4566',region_name='us-east-1',aws_access_key_id='test',aws_secret_access_key='test');cf.delete_stack(StackName='ace-bench-stack');cf.get_waiter('stack_delete_complete').wait(StackName='ace-bench-stack');print('deleted')"
-git add corpus/arch_02_serverless_api_with_rds_postgres
-git commit -m "feat(corpus): add arch02 serverless API on RDS PostgreSQL (known-good)"
+git add corpus/arch_03_serverless_api_with_rds_postgres
+git commit -m "feat(corpus): add arch03 serverless API on RDS PostgreSQL (known-good)"
 ```
 
 ---
@@ -561,7 +561,7 @@ git commit -m "feat(corpus): add arch02 serverless API on RDS PostgreSQL (known-
 
 Each scenario = a copy of the corpus deployment with one injected fault, a symptom-only `scenario.md`, a `fault_manifest.json` (never exposed), and a verified reproduction. Use the Task 1 locked mechanisms.
 
-**Files (per scenario `scenarios/arch02_fault0N_<class>/`):**
+**Files (per scenario `scenarios/arch03_fault0N_<class>/`):**
 - Create: `faulted.yaml` (corpus `known_good.yaml` with ONE injected fault)
 - Create: `scenario.md` (symptom only)
 - Create: `fault_manifest.json` (never exposed)
@@ -574,8 +574,8 @@ Each scenario = a copy of the corpus deployment with one injected fault, a sympt
 - [ ] **Step 1: Scaffold all four scenario dirs from the corpus**
 
 ```bash
-CORP=corpus/arch_02_serverless_api_with_rds_postgres
-for s in arch02_fault01_connectivity arch02_fault02_security arch02_fault03_credentials arch02_fault04_performance; do
+CORP=corpus/arch_03_serverless_api_with_rds_postgres
+for s in arch03_fault01_connectivity arch03_fault02_security arch03_fault03_credentials arch03_fault04_performance; do
   mkdir -p scenarios/$s
   cp $CORP/known_good.yaml scenarios/$s/faulted.yaml
   cp -r $CORP/deployment scenarios/$s/deployment
@@ -584,24 +584,24 @@ done
 
 - [ ] **Step 2: Inject fault01 (connectivity)**
 
-In `scenarios/arch02_fault01_connectivity/faulted.yaml`, apply the Task 1-locked mechanism:
+In `scenarios/arch03_fault01_connectivity/faulted.yaml`, apply the Task 1-locked mechanism:
 - If SG enforced: remove the `DbSecurityGroup` ingress rule on `5432` (delete the `SecurityGroupIngress` entry).
 - Fallback (SG not enforced): change `ApiHandlerFunction` env `DB_PORT` to a wrong port (e.g. `5433`), OR remove `VpcConfig`.
 Record the exact `target_resource`/`target_property`/`original_value`/`injected_value` for the manifest.
 
 - [ ] **Step 3: Inject fault02 (security — KMS Decrypt)**
 
-In `scenarios/arch02_fault02_security/faulted.yaml`:
+In `scenarios/arch03_fault02_security/faulted.yaml`:
 - Primary: remove the `kms:Decrypt` statement granting `ApiHandlerRole` on `DbKmsKey` (from the role policy AND/OR the key policy, matching what Task 1 found enforced).
 - Fallback (KMS not enforced): remove `secretsmanager:GetSecretValue` from `ApiHandlerRole` while keeping the secret KMS-encrypted (symptom-equivalent).
 
 - [ ] **Step 4: Inject fault03 (credentials)**
 
-In `scenarios/arch02_fault03_credentials/faulted.yaml`: point `ApiHandlerFunction` env `DB_SECRET_ARN` at a wrong/nonexistent secret ARN, OR scope the role's `secretsmanager:GetSecretValue` Resource to a different secret ARN. (Distinct from fault02: here Decrypt is fine, the secret reference is wrong.)
+In `scenarios/arch03_fault03_credentials/faulted.yaml`: point `ApiHandlerFunction` env `DB_SECRET_ARN` at a wrong/nonexistent secret ARN, OR scope the role's `secretsmanager:GetSecretValue` Resource to a different secret ARN. (Distinct from fault02: here Decrypt is fine, the secret reference is wrong.)
 
 - [ ] **Step 5: Inject fault04 (performance)**
 
-In `scenarios/arch02_fault04_performance/faulted.yaml`:
+In `scenarios/arch03_fault04_performance/faulted.yaml`:
 - If `max_connections` enforced: set `DbParameterGroup` `max_connections` to a tiny value (e.g. `2`).
 - Fallback: set `DBInstanceClass` to the smallest class and rely on a CloudWatch/latency-observable signal.
 
@@ -629,8 +629,8 @@ For each scenario, set `optimal_files_changed`/`optimal_lines_changed` to the mi
 - [ ] **Step 10: Commit**
 
 ```bash
-git add scenarios/arch02_fault01_connectivity scenarios/arch02_fault02_security scenarios/arch02_fault03_credentials scenarios/arch02_fault04_performance
-git commit -m "feat(scenarios): add four arch02 RDS fault scenarios with manifests"
+git add scenarios/arch03_fault01_connectivity scenarios/arch03_fault02_security scenarios/arch03_fault03_credentials scenarios/arch03_fault04_performance
+git commit -m "feat(scenarios): add four arch03 RDS fault scenarios with manifests"
 ```
 
 ---
@@ -645,16 +645,16 @@ Bring tool counts and architecture inventory in sync across the guides.
 - Modify: `RUN.md` (tool inventory; model-access count)
 
 **Interfaces:**
-- Consumes: the final tool list from Task 2 (3 new tools) and the arch02 corpus/scenarios from Tasks 3–4.
-- Produces: consistent counts (diagnostic tools 58 → 61; the model-access count rises by 3 accordingly) and a documented arch02.
+- Consumes: the final tool list from Task 2 (3 new tools) and the arch03 corpus/scenarios from Tasks 3–4.
+- Produces: consistent counts (diagnostic tools 58 → 61; the model-access count rises by 3 accordingly) and a documented arch03.
 
 - [ ] **Step 1: Update `CLAUDE.md`**
 
-Change the MCP server description from "56 diagnostic + 2 score tools across 27 LocalStack services" to "59 diagnostic + 2 score tools" (56 was the pre-2A diagnostic count; confirm the current number in the file and add 3) and add `harness/mcp_server/tools/probe_rds.js` (3 RDS tools) to the `tools/` listing. Add `corpus/arch_02_serverless_api_with_rds_postgres/` and the four `scenarios/arch02_fault0N_*` entries to the Project Layout.
+Change the MCP server description from "56 diagnostic + 2 score tools across 27 LocalStack services" to "59 diagnostic + 2 score tools" (56 was the pre-2A diagnostic count; confirm the current number in the file and add 3) and add `harness/mcp_server/tools/probe_rds.js` (3 RDS tools) to the `tools/` listing. Add `corpus/arch_03_serverless_api_with_rds_postgres/` and the four `scenarios/arch03_fault0N_*` entries to the Project Layout.
 
 - [ ] **Step 2: Update `README.md` and `RUN.md`**
 
-Bump the diagnostic tool count by 3 and the model-access count by 3 in both files; add the three RDS tools to the tool tables; add arch02 to any architecture/corpus inventory.
+Bump the diagnostic tool count by 3 and the model-access count by 3 in both files; add the three RDS tools to the tool tables; add arch03 to any architecture/corpus inventory.
 
 - [ ] **Step 3: Verify counts are consistent**
 
@@ -670,7 +670,7 @@ Expected: the printed total equals diagnostic + score counts cited in the docs.
 
 ```bash
 git add CLAUDE.md README.md RUN.md
-git commit -m "docs: document arch02 RDS architecture and RDS MCP tools (61 tools)"
+git commit -m "docs: document arch03 RDS architecture and RDS MCP tools (61 tools)"
 ```
 
 ---
@@ -744,8 +744,8 @@ Fault02 (security) will remove `secretsmanager:GetSecretValue` from `ApiHandlerR
 - Test: wrapped a live psycopg2 connection in `XRayTracedConn`, ran `SELECT 1 + 1` inside `xray_recorder.in_segment(...)`. Segment serialization showed **1 SQL subsegment** with `name=spike-db`, `sql={'database_type': 'PostgreSQL'}`.
 - The `ace_get_trace` X-Ray tool already exists in `harness/mcp_server/tools/observe_tracing.js`. Capturing SQL subsegments is feasible.
 
-**Locked decision — arch02 X-Ray instrumentation: INSTRUMENT.**
-The arch02 Lambda handler will wrap its psycopg2 connection in `XRayTracedConn` (not `patch_all`) and use `xray_recorder.in_segment` / `xray_recorder.in_subsegment` for DB calls. This produces diagnosable SQL subsegments visible via `ace_get_trace`. No new MCP tool needed (existing `ace_get_trace` / `ace_get_trace_summaries` cover it).
+**Locked decision — arch03 X-Ray instrumentation: INSTRUMENT.**
+The arch03 Lambda handler will wrap its psycopg2 connection in `XRayTracedConn` (not `patch_all`) and use `xray_recorder.in_segment` / `xray_recorder.in_subsegment` for DB calls. This produces diagnosable SQL subsegments visible via `ace_get_trace`. No new MCP tool needed (existing `ace_get_trace` / `ace_get_trace_summaries` cover it).
 
 ### Summary — locked fault mechanisms for Tasks 3–4 (final, incl. follow-up)
 

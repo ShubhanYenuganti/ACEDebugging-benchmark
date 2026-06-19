@@ -1,4 +1,4 @@
-# Phase 2B-1 — RDS PostgreSQL Architecture (arch02)
+# Phase 2B-1 — RDS PostgreSQL Architecture (arch03)
 
 **Date:** 2026-06-19
 **Status:** Approved design — ready for writing-plans
@@ -38,7 +38,7 @@ spec → plan → corpus build. It is scoped as a single implementation plan.
 
 ---
 
-## Architecture (arch02)
+## Architecture (arch03)
 
 **Shape:** `API Gateway → Lambda (in VPC) → RDS PostgreSQL`, with **Secrets
 Manager** holding DB credentials and a **VPC + private subnets + security group**
@@ -68,9 +68,9 @@ simplest to provision.
 **Handler dependency:** handlers vendor `psycopg2` (the same vendoring pattern
 arch01 uses for `aws_xray_sdk`) and read credentials from Secrets Manager at
 runtime. Whether to also carry forward arch01's X-Ray instrumentation into
-arch02 handlers is **decided by the Task 1 spike** (see below): the spike probes
+arch03 handlers is **decided by the Task 1 spike** (see below): the spike probes
 whether psycopg2 SQL subsegments capture cleanly on LocalStack. If they do and
-the value justifies the vendoring cost, instrument; otherwise defer arch02
+the value justifies the vendoring cost, instrument; otherwise defer arch03
 tracing to a later depth pass. Setting `TracingConfig: Active` without SDK
 instrumentation is pointless — LocalStack does not auto-instrument Lambda
 (arch01 spike finding), so it is all-or-nothing.
@@ -87,10 +87,10 @@ layout. Each manifest's `optimal_tool_calls` / `optimal_files_changed` /
 
 | ID | Class | Injected fault | Optimal diagnosis path |
 |----|-------|----------------|------------------------|
-| `arch02_fault01_connectivity` | connectivity | Security group missing ingress on 5432 (primary); Lambda detached from VPC (fallback if SG not enforced) | `ace_describe_security_group` + `ace_check_db_connectivity` |
-| `arch02_fault02_security` | security | DB-credentials secret is encrypted with a customer-managed KMS CMK, but the Lambda execution role / key policy lacks `kms:Decrypt` on that key (the secret ARN is correct and `GetSecretValue` is allowed — only Decrypt is the gap) | logs (KMS `AccessDeniedException`) + `ace_describe_kms_key` + `ace_simulate_policy` |
-| `arch02_fault03_credentials` | credentials | Wrong secret ARN wired to Lambda, or missing `secretsmanager:GetSecretValue` IAM permission | `ace_describe_secret` / `ace_get_secret` + `ace_simulate_policy` + logs |
-| `arch02_fault04_performance` | performance | Parameter-group `max_connections` too low → connection exhaustion (primary); undersized instance class + CloudWatch signal (fallback) | `ace_describe_db_parameters` + `ace_get_metric_statistics` |
+| `arch03_fault01_connectivity` | connectivity | Security group missing ingress on 5432 (primary); Lambda detached from VPC (fallback if SG not enforced) | `ace_describe_security_group` + `ace_check_db_connectivity` |
+| `arch03_fault02_security` | security | DB-credentials secret is encrypted with a customer-managed KMS CMK, but the Lambda execution role / key policy lacks `kms:Decrypt` on that key (the secret ARN is correct and `GetSecretValue` is allowed — only Decrypt is the gap) | logs (KMS `AccessDeniedException`) + `ace_describe_kms_key` + `ace_simulate_policy` |
+| `arch03_fault03_credentials` | credentials | Wrong secret ARN wired to Lambda, or missing `secretsmanager:GetSecretValue` IAM permission | `ace_describe_secret` / `ace_get_secret` + `ace_simulate_policy` + logs |
+| `arch03_fault04_performance` | performance | Parameter-group `max_connections` too low → connection exhaustion (primary); undersized instance class + CloudWatch signal (fallback) | `ace_describe_db_parameters` + `ace_get_metric_statistics` |
 
 Scope is deliberately **4 scenarios** for the first build; expansion (more faults
 per class, async hops) is deferred to later 2B work.
@@ -163,17 +163,17 @@ The spike must confirm:
    `ENFORCE_IAM=1`). This is the security fault's premise.
 5. **X-Ray/psycopg2 capture (informational, not a gate).** With `aws_xray_sdk`
    `dbapi2` patching enabled on a handler, probe whether a SQL call produces a
-   nested subsegment via `ace_get_trace`. The result **decides** whether arch02
+   nested subsegment via `ace_get_trace`. The result **decides** whether arch03
    handlers are X-Ray-instrumented in this phase (instrument if capture is clean
    and worth the vendoring cost; otherwise defer to a later depth pass). This
    check does not block the corpus build — it only sets the instrumentation
    decision.
 
 **Explicit fallbacks (carried, not improvised):**
-- If SG/VPC reachability is not enforced → `arch02_fault01` uses a mechanism
+- If SG/VPC reachability is not enforced → `arch03_fault01` uses a mechanism
   LocalStack does enforce: wrong DB endpoint/port wired to the handler, or Lambda
   `VpcConfig` removed/misconfigured so the handler cannot resolve/route to the DB.
-- If `max_connections` is not enforced → `arch02_fault04` uses an
+- If `max_connections` is not enforced → `arch03_fault04` uses an
   instance-class/CloudWatch-observable performance mechanism instead, keeping the
   performance class represented.
 
@@ -192,7 +192,7 @@ fold the security class into the credentials scenario and drop to 3 scenarios.
 1. **Task 1 — Spike gate.** Validate provisioning + the three enforcement risks
    (SG/VPC, `max_connections`, KMS `Decrypt`) and run the informational
    psycopg2/X-Ray capture probe; record findings; lock each fault mechanism
-   (primary or fallback) and the arch02 X-Ray instrumentation decision.
+   (primary or fallback) and the arch03 X-Ray instrumentation decision.
 2. **Task 2 — MCP tools.** Implement `probe_rds.js` (3 tools), wire into
    `index.js`, add Node tests; confirm agent exposure.
 3. **Task 3 — Corpus known-good.** Build `corpus/arch_02_*/known_good.yaml`,
@@ -201,7 +201,7 @@ fold the security class into the credentials scenario and drop to 3 scenarios.
 4. **Task 4 — Fault scenarios.** Create the 4 scenarios + `fault_manifest.json`
    each; verify each reproduces its fault and is diagnosable via the intended
    path; baseline `optimal_*` counts.
-5. **Task 5 — Documentation.** Bump tool counts (58→61) and document arch02
+5. **Task 5 — Documentation.** Bump tool counts (58→61) and document arch03
    across `CLAUDE.md`, `README.md`, `RUN.md`; verify counts consistent.
 
 **Workflow:** this spec → `writing-plans` → `subagent-driven-development`
@@ -213,7 +213,14 @@ fold the security class into the credentials scenario and drop to 3 scenarios.
 
 - Exact domain/table schema for the CRUD app (cosmetic; pick the simplest that
   exercises a real query path).
-- Whether arch02 handlers also carry arch01's X-Ray instrumentation — **resolved
+- Whether arch03 handlers also carry arch01's X-Ray instrumentation — **resolved
   by the Task 1 spike's psycopg2/SQL-capture probe** (instrument if clean and
   worthwhile, else defer to a later depth pass).
 - Precise `optimal_*` baselines (measured during Task 4, not guessed here).
+
+---
+
+## Post-implementation corrections (2026-06-19)
+
+- **Architecture number:** `arch_02` was already taken by the pre-existing `arch_02_fuzzy_movie_search` corpus, so this architecture ships as **arch03** (`corpus/arch_03_serverless_api_with_rds_postgres`, scenarios `arch03_fault0N_*`). The MCP tools are architecture-agnostic and unaffected.
+- **Performance fault dropped:** the spike + Task 4 verification empirically confirmed LocalStack does not reproduce any performance/capacity fault — Lambda Timeout-vs-latency (round-trip completes <1s), `max_connections` (unenforced), `ReservedConcurrentExecutions=0` (not stored/throttled), and minimum `MemorySize` (no OOM) all fail to produce an observable symptom. arch03 therefore ships **3 reproducible scenarios** (connectivity, security, credentials). A performance scenario is deferred until a reproducible mechanism exists.
