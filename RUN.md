@@ -146,7 +146,7 @@ When `--model` is provided:
 1. The harness deploys the faulted scenario and prints context as usual.
 2. A daemon thread starts `run_agent_loop`, which:
    - Spawns the Node.js MCP server as a stdio subprocess (no manual registration needed).
-   - Discovers all 58 MCP tools at runtime (56 diagnostic + 2 score; see tool inventory below).
+   - Discovers all 63 MCP tools at runtime (61 diagnostic + 2 score; see tool inventory below).
    - Filters out score tools (`ace_verify_fix`, `ace_score_run`) so the model cannot call them.
    - Adds Python-native file tools (`read_file`, `write_file`, `list_directory`, `submit_fix`).
    - Loops calling the LLM up to 50 turns (default), dispatching tool calls each turn.
@@ -162,7 +162,7 @@ If the agent thread crashes (auth error, network failure, etc.), the harness exi
 
 #### MCP diagnostic tool inventory
 
-The MCP server exposes 58 tools across 27 LocalStack services (56 diagnostic + 2 score). The model has access to 56 (score tools are filtered out).
+The MCP server exposes 63 tools across 28 LocalStack services (61 diagnostic + 2 score). The model has access to 61 (score tools are filtered out).
 
 **Core probe tools (6)** — `probe.js`:
 `ace_invoke_endpoint`, `ace_invoke_lambda`, `ace_check_queue_depth`, `ace_read_table_item`, `ace_check_event_source`, `ace_check_s3_object`
@@ -180,16 +180,19 @@ The MCP server exposes 58 tools across 27 LocalStack services (56 diagnostic + 2
 `ace_lookup_events` (CloudTrail LookupEvents — recent API-call history), `ace_get_trace_summaries` (X-Ray GetTraceSummaries — recent trace summaries over a window), `ace_get_trace` (X-Ray BatchGetTraces — full segment/subsegment tree with per-hop error/fault and `aws_operation`).
 X-Ray tools return data only for X-Ray-instrumented architectures: arch01 handlers are instrumented via `aws-xray-sdk` (`xray_instrument.py`); other architectures are not yet. `ace_get_service_graph` is intentionally not provided (non-functional on LocalStack). Note: `ace_get_trace_summaries`' `only_errors`/`filter_expression` server-side filter is not implemented on LocalStack — list traces by window and inspect each via `ace_get_trace`.
 
+**RDS probe tools (3)** — `probe_rds.js`:
+`ace_describe_db_instance` (RDS instance config: status, engine, endpoint, security groups, parameter group), `ace_describe_db_parameters` (DB parameter group values; optionally filter to specific names), `ace_check_db_connectivity` (TCP socket check to a DB endpoint host:port — `connected`/`refused`/`timeout`/`error`; pair with `ace_describe_security_group` for connectivity-class faults).
+
 **Score tools (2, harness-only)** — `score.js`:
 `ace_verify_fix`, `ace_score_run`
 
-**Services covered:** CloudFormation, Lambda, DynamoDB, DynamoDB Streams, SQS, IAM, CloudWatch Logs, CloudWatch Metrics, S3, S3 Control, SNS, EventBridge, EventBridge Scheduler, Step Functions, SWF, SES, EC2, Route 53, Route 53 Resolver, Kinesis Streams, Kinesis Firehose, KMS, Secrets Manager, STS, SSM, CloudTrail, API Gateway (via HTTP fetch)
+**Services covered:** CloudFormation, Lambda, DynamoDB, DynamoDB Streams, SQS, IAM, CloudWatch Logs, CloudWatch Metrics, S3, S3 Control, SNS, EventBridge, EventBridge Scheduler, Step Functions, SWF, SES, EC2, Route 53, Route 53 Resolver, Kinesis Streams, Kinesis Firehose, KMS, Secrets Manager, STS, SSM, CloudTrail, RDS, API Gateway (via HTTP fetch)
 
 ---
 
 ## Step 4 — Choose a Scenario
 
-Available scenarios are under `scenarios/`. 40 scenarios span 4 corpus architectures (10 faults each):
+Available scenarios are under `scenarios/`. 43 scenarios span 5 corpus architectures:
 
 ```
 scenarios/
@@ -200,6 +203,9 @@ scenarios/
 ├── arch02_fault01_data_correctness ─┐
 ├── ...                              │ arch_02 — fuzzy movie search
 ├── arch02_fault10_reliability      ─┘
+├── arch03_fault01_connectivity     ─┐
+├── arch03_fault02_security          │ arch_03 — serverless API with RDS Postgres
+├── arch03_fault03_credentials      ─┘   (Lambda, API Gateway, RDS PostgreSQL, Secrets Manager)
 ├── arch08_fault01_connectivity     ─┐
 ├── ...                              │ arch_08 — event-driven SNS FIFO
 ├── arch08_fault10_data_correctness ─┘   (SNS, DynamoDB, Lambda, S3)
@@ -210,6 +216,8 @@ scenarios/
 
 Each scenario's fault class is one of: `connectivity`, `data_correctness`, `performance`, `reliability`, `security`.
 
+> **LocalStack limitation:** performance/capacity fault classes (e.g. `max_connections`, Lambda reserved-concurrency, memory limits, timeout-vs-latency) are not reproducible on LocalStack — these fault types are excluded from arch03 and any other architecture where they depend on real resource enforcement.
+
 The corpus architecture the scenario targets is under `corpus/`:
 
 ```
@@ -219,6 +227,7 @@ corpus/
 │   ├── functional_test.py   # assertion suite
 │   └── traffic_flow.md      # hop-by-hop request flow description
 ├── arch_02_fuzzy_movie_search/
+├── arch_03_serverless_api_with_rds_postgres/
 ├── arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/
 └── arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/
 ```

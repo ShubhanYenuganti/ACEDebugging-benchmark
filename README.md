@@ -30,7 +30,7 @@ The model never sees `fault_manifest.json` or `known_good.yaml`. It only sees th
 | Phase | What it builds | Status |
 |-------|---------------|--------|
 | **A** | Shared Python utilities (LocalStack client, cfn-lint runner, file differ, result logger) | ✅ Complete — covered by `tests/test_shared.py` |
-| **B** | Diagnostic MCP server with 58 tools (56 diagnostic + 2 score): 6 probe, 22 probe-ext, 6 observe, 21 observe-ext, 3 observe-tracing, 2 score | ✅ Complete — 132 Node tests passing |
+| **B** | Diagnostic MCP server with 63 tools (61 diagnostic + 2 score): 6 probe, 22 probe-ext, 6 observe, 21 observe-ext, 3 observe-tracing, 3 RDS probe, 2 score | ✅ Complete — 132 Node tests passing |
 | **C** | Scenario runner + deployment handler (deploy faulted template, intercept fix submission) | ✅ Complete — 27 Python test functions |
 | **D** | Verify loop — 4 scoring passes (functional, regression, classification, concurrency) | ✅ Complete — 2 Python test functions |
 | **E** | Harness entry point `run.py` — ties all phases together end-to-end | ✅ Complete — 1 E2E Python test function |
@@ -119,8 +119,8 @@ ace-bench/
 │   │   ├── file_differ.py          # snapshot + diff for deployment dir
 │   │   ├── result_logger.py        # thread-safe JSON result writer
 │   │   └── template_parser.py      # extract S3Key stems from CloudFormation YAML
-│   ├── mcp_server/           # Phase B — Node.js MCP server (56 diagnostic + 2 score tools, 27 services)
-│   │   ├── index.js                # McpServer + StdioTransport, spreads all 6 tool arrays
+│   ├── mcp_server/           # Phase B — Node.js MCP server (61 diagnostic + 2 score tools, 28 services)
+│   │   ├── index.js                # McpServer + StdioTransport, spreads all 7 tool arrays
 │   │   ├── package.json
 │   │   └── tools/
 │   │       ├── probe.js            # 6 core probe tools
@@ -128,6 +128,7 @@ ace-bench/
 │   │       ├── observe.js          # 6 core observe tools
 │   │       ├── observe_extended.js # 21 extended observe tools
 │   │       ├── observe_tracing.js  # 3 tools: ace_lookup_events (CloudTrail) + ace_get_trace_summaries/ace_get_trace (X-Ray)
+│   │       ├── probe_rds.js        # 3 RDS tools: ace_describe_db_instance, ace_describe_db_parameters, ace_check_db_connectivity
 │   │       └── score.js            # 2 gated score tools
 │   ├── runner/               # Phase C — Scenario runner
 │   │   ├── context_builder.py      # build_context: reads scenario files, guards manifest
@@ -154,12 +155,13 @@ ace-bench/
 │       ├── __init__.py
 │       ├── tools.py                # MCP→OpenAI conversion, file tool dispatch, path guards
 │       └── loop.py                 # async LiteLLM loop, text-mode retry, verbose streaming
-├── corpus/                   # 4 architectures, each with known_good.yaml + functional_test.py
+├── corpus/                   # 5 architectures, each with known_good.yaml + functional_test.py
 │   ├── arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda/
 │   ├── arch_02_fuzzy_movie_search/
+│   ├── arch_03_serverless_api_with_rds_postgres/
 │   ├── arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/
 │   └── arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/
-├── scenarios/                # 40 faulted scenarios (10 per architecture)
+├── scenarios/                # 43 faulted scenarios across 5 corpus architectures
 ├── results/                  # Per-run output (gitignored)
 │   └── [run_id]/
 │       ├── scenario_id.txt, tool_call_trace.json, file_change_log.json
@@ -186,7 +188,7 @@ ace-bench/
 
 ## MCP Diagnostic Tools
 
-58 tools across 27 LocalStack services (56 diagnostic + 2 score). The model under evaluation sees 56 — score tools are filtered out at the agent layer. Requires LocalStack **Ultimate** license; IAM enforcement (`ENFORCE_IAM=1 IAM_SOFT_MODE=0`) must be active. A CloudTrail tool (`ace_lookup_events`) surfaces recent API-call history, and X-Ray trace tools (`ace_get_trace_summaries`, `ace_get_trace`) expose the distributed-trace segment tree. The X-Ray tools return data only for X-Ray-instrumented architectures: arch01 is instrumented via `aws-xray-sdk` (`xray_instrument.py`); other architectures are not yet instrumented.
+63 tools across 28 LocalStack services (61 diagnostic + 2 score). The model under evaluation sees 61 — score tools are filtered out at the agent layer. Requires LocalStack **Ultimate** license; IAM enforcement (`ENFORCE_IAM=1 IAM_SOFT_MODE=0`) must be active. A CloudTrail tool (`ace_lookup_events`) surfaces recent API-call history, and X-Ray trace tools (`ace_get_trace_summaries`, `ace_get_trace`) expose the distributed-trace segment tree. The X-Ray tools return data only for X-Ray-instrumented architectures: arch01 is instrumented via `aws-xray-sdk` (`xray_instrument.py`); other architectures are not yet instrumented.
 
 ### Probe tools — active inspection (6)
 
@@ -270,6 +272,14 @@ ace-bench/
 | `ace_lookup_events` | CloudTrail LookupEvents — recent API-call history (event name, source, resources, error_code/message). |
 | `ace_get_trace_summaries` | X-Ray GetTraceSummaries — list recent trace summaries over a window (id, duration, error/fault/throttle flags, entry service). Note: on LocalStack the `only_errors`/`filter_expression` server-side filter is **not implemented** (returns an error) and summary-level `has_fault`/`has_error` are not populated — list traces with `window_minutes` and inspect them via `ace_get_trace`. |
 | `ace_get_trace` | X-Ray BatchGetTraces — full segment tree for one trace id; per-segment + per-subsegment `error`/`fault`/`http_status` and the downstream `aws_operation`. Returns data only for X-Ray-instrumented handlers (arch01 via `aws-xray-sdk`). |
+
+### RDS probe tools — active inspection (3)
+
+| Tool | Description |
+|------|-------------|
+| `ace_describe_db_instance` | RDS DescribeDBInstances — status, engine/version, instance class, endpoint host/port, publicly_accessible, storage_encrypted, attached VPC security group IDs, DB subnet group, parameter group name |
+| `ace_describe_db_parameters` | RDS DescribeDBParameters — list parameters for a named DB parameter group (name, value, source, apply_type); optionally filter to specific parameter names |
+| `ace_check_db_connectivity` | Open a raw TCP socket to a DB endpoint host:port and report whether it is reachable (`connected`, `refused`, `timeout`, or `error`). Use with `ace_describe_security_group` and `ace_describe_db_instance` to diagnose connectivity-class faults. |
 
 ### Score tools — harness only (2)
 

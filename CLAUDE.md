@@ -111,8 +111,8 @@ ace-bench/
 │   │   ├── cfn_lint_runner.py
 │   │   ├── file_differ.py
 │   │   └── result_logger.py
-│   ├── mcp_server/               # Phase B — 56 diagnostic + 2 score tools across 27 LocalStack services
-│   │   ├── index.js              # spreads all 6 tool arrays into MCP server
+│   ├── mcp_server/               # Phase B — 61 diagnostic + 2 score tools across 28 LocalStack services
+│   │   ├── index.js              # spreads all 7 tool arrays into MCP server
 │   │   ├── package.json
 │   │   └── tools/
 │   │       ├── probe.js           # 6 original probe tools
@@ -120,6 +120,7 @@ ace-bench/
 │   │       ├── observe.js         # 6 original observe tools
 │   │       ├── observe_extended.js # 21 extended observe tools (SNS→CloudWatch)
 │   │       ├── observe_tracing.js  # 3 tools: ace_lookup_events (CloudTrail) + ace_get_trace_summaries/ace_get_trace (X-Ray)
+│   │       ├── probe_rds.js       # 3 RDS tools: ace_describe_db_instance, ace_describe_db_parameters, ace_check_db_connectivity
 │   │       └── score.js           # 2 score tools
 │   ├── runner/                   # Phase C
 │   │   ├── scenario_runner.py
@@ -147,16 +148,28 @@ ace-bench/
 │   │   └── loop.py               # async LiteLLM agent loop
 │   └── run.py                    # Phase E — entry point
 ├── corpus/
-│   └── arch_01_[name]/
-│       ├── known_good.yaml       # never expose to model
-│       ├── functional_test.py
-│       └── traffic_flow.md
+│   ├── arch_01_[name]/           # serverless microservices (API Gateway, DynamoDB, SQS, Lambda)
+│   │   ├── known_good.yaml       # never expose to model
+│   │   ├── functional_test.py
+│   │   └── traffic_flow.md
+│   ├── arch_02_fuzzy_movie_search/
+│   ├── arch_03_serverless_api_with_rds_postgres/  # Lambda + API Gateway + RDS PostgreSQL
+│   ├── arch_08_event_driven_architecture_with_sns_fifo_dynamodb_lambda_and_s3/
+│   └── arch_12_event_driven_architecture_with_sqs_lambda_dynamodb_and_s3/
 ├── scenarios/
-│   └── arch01_fault01_[class]/
-│       ├── scenario.md
-│       ├── faulted.yaml
-│       ├── fault_manifest.json   # never expose to model
-│       └── deployment/lambda/handler.py
+│   ├── arch01_fault01_[class]/   # (10 arch01 scenarios)
+│   │   ├── scenario.md
+│   │   ├── faulted.yaml
+│   │   ├── fault_manifest.json   # never expose to model
+│   │   └── deployment/lambda/handler.py
+│   ├── arch02_fault0N_[class]/   # (arch02 scenarios)
+│   ├── arch03_fault01_connectivity/   # RDS subnet/SG misconfiguration
+│   ├── arch03_fault02_security/       # RDS security group blocks Lambda
+│   ├── arch03_fault03_credentials/    # DB credentials wrong in Secrets Manager
+│   │   # Note: performance/capacity faults (max_connections, memory, reserved-concurrency)
+│   │   # are not reproducible on LocalStack — dropped from arch03 scenario set.
+│   ├── arch08_fault0N_[class]/   # (arch08 scenarios)
+│   └── arch12_fault0N_[class]/   # (arch12 scenarios)
 ├── results/[run_id]/
 │   ├── scenario_id.txt
 │   ├── tool_call_trace.json
