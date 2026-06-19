@@ -68,8 +68,12 @@ simplest to provision.
 **Handler dependency:** handlers vendor `psycopg2` (the same vendoring pattern
 arch01 uses for `aws_xray_sdk`) and read credentials from Secrets Manager at
 runtime. Whether to also carry forward arch01's X-Ray instrumentation into
-arch02 handlers is an implementation-plan decision (default: not required for
-2B-1; revisit if trace value is wanted later).
+arch02 handlers is **decided by the Task 1 spike** (see below): the spike probes
+whether psycopg2 SQL subsegments capture cleanly on LocalStack. If they do and
+the value justifies the vendoring cost, instrument; otherwise defer arch02
+tracing to a later depth pass. Setting `TracingConfig: Active` without SDK
+instrumentation is pointless — LocalStack does not auto-instrument Lambda
+(arch01 spike finding), so it is all-or-nothing.
 
 ---
 
@@ -157,6 +161,13 @@ The spike must confirm:
    CMK is retrievable when the role has `kms:Decrypt`, **and retrieval fails with
    an `AccessDeniedException` when the role/key policy lacks it** (under
    `ENFORCE_IAM=1`). This is the security fault's premise.
+5. **X-Ray/psycopg2 capture (informational, not a gate).** With `aws_xray_sdk`
+   `dbapi2` patching enabled on a handler, probe whether a SQL call produces a
+   nested subsegment via `ace_get_trace`. The result **decides** whether arch02
+   handlers are X-Ray-instrumented in this phase (instrument if capture is clean
+   and worth the vendoring cost; otherwise defer to a later depth pass). This
+   check does not block the corpus build — it only sets the instrumentation
+   decision.
 
 **Explicit fallbacks (carried, not improvised):**
 - If SG/VPC reachability is not enforced → `arch02_fault01` uses a mechanism
@@ -178,8 +189,10 @@ fold the security class into the credentials scenario and drop to 3 scenarios.
 
 ## Testing & sequencing
 
-1. **Task 1 — Spike gate.** Validate provisioning + the two enforcement risks;
-   record findings; lock fault mechanisms (primary or fallback).
+1. **Task 1 — Spike gate.** Validate provisioning + the three enforcement risks
+   (SG/VPC, `max_connections`, KMS `Decrypt`) and run the informational
+   psycopg2/X-Ray capture probe; record findings; lock each fault mechanism
+   (primary or fallback) and the arch02 X-Ray instrumentation decision.
 2. **Task 2 — MCP tools.** Implement `probe_rds.js` (3 tools), wire into
    `index.js`, add Node tests; confirm agent exposure.
 3. **Task 3 — Corpus known-good.** Build `corpus/arch_02_*/known_good.yaml`,
@@ -200,6 +213,7 @@ fold the security class into the credentials scenario and drop to 3 scenarios.
 
 - Exact domain/table schema for the CRUD app (cosmetic; pick the simplest that
   exercises a real query path).
-- Whether arch02 handlers also carry arch01's X-Ray instrumentation (default: no
-  for 2B-1).
+- Whether arch02 handlers also carry arch01's X-Ray instrumentation — **resolved
+  by the Task 1 spike's psycopg2/SQL-capture probe** (instrument if clean and
+  worthwhile, else defer to a later depth pass).
 - Precise `optimal_*` baselines (measured during Task 4, not guessed here).
