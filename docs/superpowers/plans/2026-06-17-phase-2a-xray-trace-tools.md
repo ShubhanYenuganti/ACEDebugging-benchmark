@@ -474,13 +474,13 @@ git commit -m "feat(corpus): X-Ray instrumentation module + emission gate (arch0
 **Interfaces:**
 - Consumes: `from xray_instrument import traced` and the `@traced(name)` pattern from Task 2.
 
-- [ ] **Step 1: Instrument the remaining five handlers**
+- [x] **Step 1: Instrument the remaining five handlers**
 
 For each of `accept-state-handler`, `read-handler`, `reject-state-handler`, `request-state-handler`, `unfriend-state-handler` (`index.py`):
 - add `from xray_instrument import traced` with the other imports
 - decorate the entry handler with `@traced("<FunctionLogicalName>")` (match the logical name from known_good.yaml, e.g. `AcceptStateHandlerFunction`).
 
-- [ ] **Step 2: Add TracingConfig to all six functions and X-Ray IAM perms to all roles**
+- [x] **Step 2: Add TracingConfig to all six functions and X-Ray IAM perms to all roles**
 
 In `corpus/arch_01_.../known_good.yaml`, for each of the six `AWS::Lambda::Function` resources add under `Properties:`:
 
@@ -499,7 +499,7 @@ For each IAM role's inline policy `Statement`, append:
             Resource: "*"
 ```
 
-- [ ] **Step 3: Vendor the SDK + shared module into all six handler dirs**
+- [x] **Step 3: Vendor the SDK + shared module into all six handler dirs**
 
 ```bash
 for h in accept-state-handler front-handler read-handler reject-state-handler request-state-handler unfriend-state-handler; do
@@ -507,7 +507,7 @@ for h in accept-state-handler front-handler read-handler reject-state-handler re
 done
 ```
 
-- [ ] **Step 4: Re-deploy known_good and confirm no regression**
+- [x] **Step 4: Re-deploy known_good and confirm no regression**
 
 ```bash
 python corpus/validate_deploy.py corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and_lambda
@@ -516,7 +516,7 @@ python corpus/arch_01_serverless_microservices_with_api_gateway_dynamodb_sqs_and
 
 Expected: deployment `CREATE_COMPLETE`; all functional_test assertions pass (instrumentation does not change behavior).
 
-- [ ] **Step 5: Confirm multi-segment traces appear**
+- [x] **Step 5: Confirm multi-segment traces appear**
 
 ```bash
 python scripts/validate_xray_emission.py
@@ -524,7 +524,7 @@ python scripts/validate_xray_emission.py
 
 Expected: `EMISSION GATE PASSED`; `ace_get_trace_summaries` returns multiple traces spanning the request→accept flow.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add corpus/arch_01_*/deployment/lambda/ corpus/arch_01_*/known_good.yaml
