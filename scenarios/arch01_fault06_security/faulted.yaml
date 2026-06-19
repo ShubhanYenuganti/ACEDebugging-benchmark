@@ -67,6 +67,11 @@ Resources:
                   - dynamodb:UpdateItem
                   - dynamodb:DeleteItem
                 Resource: !GetAtt FriendTable.Arn
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
 
   StreamHandlerRole:
     Type: AWS::IAM::Role
@@ -106,6 +111,11 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt StateHandleDLQ.Arn
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
 
   ReadHandlerRole:
     Type: AWS::IAM::Role
@@ -133,6 +143,11 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:Query
                 Resource: !GetAtt FriendTable.Arn
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
 
   FrontHandlerFunction:
     Type: AWS::Lambda::Function
@@ -142,9 +157,12 @@ Resources:
       Handler: index.handler
       Role: !GetAtt FrontHandlerRole.Arn
       Timeout: 120
+      TracingConfig:
+        Mode: Active
       Environment:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
+          AWS_ENDPOINT_URL: http://localhost.localstack.cloud:4566
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: front-handler.zip
@@ -196,9 +214,12 @@ Resources:
       Handler: index.handler
       Role: !GetAtt RequestStateHandlerRole.Arn
       Timeout: 120
+      TracingConfig:
+        Mode: Active
       Environment:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
+          AWS_ENDPOINT_URL: http://localhost.localstack.cloud:4566
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: request-state-handler.zip
@@ -211,9 +232,12 @@ Resources:
       Handler: index.handler
       Role: !GetAtt StreamHandlerRole.Arn
       Timeout: 120
+      TracingConfig:
+        Mode: Active
       Environment:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
+          AWS_ENDPOINT_URL: http://localhost.localstack.cloud:4566
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: accept-state-handler.zip
@@ -226,9 +250,12 @@ Resources:
       Handler: index.handler
       Role: !GetAtt StreamHandlerRole.Arn
       Timeout: 120
+      TracingConfig:
+        Mode: Active
       Environment:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
+          AWS_ENDPOINT_URL: http://localhost.localstack.cloud:4566
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: reject-state-handler.zip
@@ -241,9 +268,12 @@ Resources:
       Handler: index.handler
       Role: !GetAtt StreamHandlerRole.Arn
       Timeout: 120
+      TracingConfig:
+        Mode: Active
       Environment:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
+          AWS_ENDPOINT_URL: http://localhost.localstack.cloud:4566
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: unfriend-state-handler.zip
@@ -256,9 +286,12 @@ Resources:
       Handler: index.handler
       Role: !GetAtt ReadHandlerRole.Arn
       Timeout: 30
+      TracingConfig:
+        Mode: Active
       Environment:
         Variables:
           FRIEND_TABLE: !Ref FriendTable
+          AWS_ENDPOINT_URL: http://localhost.localstack.cloud:4566
       Code:
         S3Bucket: ace-bench-artifacts
         S3Key: read-handler.zip
