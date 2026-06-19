@@ -1,0 +1,36 @@
+{
+  "fault_id": "arch02_fault12",
+  "fault_class": "security",
+  "architecture": "arch_02_serverless_api_with_rds_postgres",
+  "scenario_id": "arch02_fault12_security",
+  "target_resource": "ApiHandlerRole",
+  "target_property": "Policies[0].PolicyDocument.Statement[secretsmanager:GetSecretValue]",
+  "injected_value": "(statement removed)",
+  "original_value": "Effect: Allow, Action: secretsmanager:GetSecretValue, Resource: !Ref DbSecret",
+  "valid_fixes": [
+    "Restore the secretsmanager:GetSecretValue Allow statement in ApiHandlerRole policy scoped to !Ref DbSecret"
+  ],
+  "invalid_patches": [
+    "Grant secretsmanager:* on * to work around the scope",
+    "Attach AdministratorAccess to the role",
+    "Disable secret encryption",
+    "Grant kms:* on *",
+    "Set key policy principal to *"
+  ],
+  "optimal_tool_calls": 3,
+  "optimal_files_changed": 1,
+  "optimal_lines_changed": 5,
+  "optimal_diagnostic_path": [
+    "ace_get_log_tail(ace-bench-stack-api-handler) → shows AccessDeniedException on secretsmanager:GetSecretValue",
+    "ace_get_iam_role(ace-bench-stack-api-handler-role) → policy document does not contain secretsmanager:GetSecretValue statement; confirms missing permission",
+    "ace_simulate_policy(role=ace-bench-stack-api-handler-role, action=secretsmanager:GetSecretValue, resource=<secret-arn>) → returns DENY; confirms root cause"
+  ],
+  "concurrency_probe_n": null,
+  "deployment_check": "CREATE_COMPLETE",
+  "observability_check": "functional_test assertion 'order_created' (POST /orders returns 201) fails; Lambda logs show AccessDeniedException on secretsmanager:GetSecretValue",
+  "observable_symptom": "POST /orders returns 500 on every request. Lambda logs show an AccessDeniedException when the handler calls Secrets Manager to retrieve database credentials. The secret exists and contains valid credentials; the KMS key grant is intact.",
+  "root_cause": "The ApiHandlerRole IAM policy is missing the secretsmanager:GetSecretValue Allow statement. The Lambda cannot retrieve the database password from Secrets Manager. Every invocation fails with AccessDeniedException before a database connection is attempted.",
+  "corpus_path": "corpus/arch_02_serverless_api_with_rds_postgres",
+  "functional_test_path": "corpus/arch_02_serverless_api_with_rds_postgres/functional_test.py",
+  "known_good_path": "corpus/arch_02_serverless_api_with_rds_postgres/known_good.yaml"
+}
