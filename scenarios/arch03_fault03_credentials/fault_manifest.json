@@ -7,9 +7,10 @@
   "target_property": "Properties.Environment.Variables.DB_SECRET_ARN",
   "injected_value": "'arn:aws:secretsmanager:us-east-1:000000000000:secret:ace-bench-stack-db-secret-wrong'",
   "original_value": "!Ref DbSecret",
-  "note": "ApiHandlerRole.secretsmanager:GetSecretValue Resource is intentionally set to '*' in this scenario (rather than !Ref DbSecret) so that the IAM check passes and the ResourceNotFoundException from Secrets Manager is the observable symptom — making it distinct from fault12 (AccessDeniedException).",
+  "note": "This faulted.yaml contains TWO deliberate changes vs known_good. (a) PRIMARY FAULT — the one to identify: ApiHandlerFunction env DB_SECRET_ARN points to a wrong/nonexistent ARN instead of !Ref DbSecret. (b) SCENARIO SETUP — not itself the fault: ApiHandlerRole.secretsmanager:GetSecretValue Resource was widened from !Ref DbSecret to '*' so the wrong-ARN lookup surfaces as ResourceNotFoundException rather than AccessDeniedException (which would be indistinguishable from arch03_fault02_security). The IAM widening must NOT be scored as a missed fault — identification credit belongs to the DB_SECRET_ARN root cause.",
   "valid_fixes": [
-    "Restore ApiHandlerFunction env DB_SECRET_ARN to !Ref DbSecret so the Lambda references the real deployed secret"
+    "Restore ApiHandlerFunction env DB_SECRET_ARN to !Ref DbSecret so the Lambda references the real deployed secret (minimal functional fix; passes the functional test on its own — 1 file, 1 line)",
+    "Re-scope ApiHandlerRole secretsmanager:GetSecretValue Resource from '*' back to !Ref DbSecret as least-privilege hardening (optional for function, good security practice; not required to pass the functional test)"
   ],
   "invalid_patches": [
     "Create a new secret at the wrong ARN path to match the bad reference",
@@ -28,7 +29,7 @@
   "deployment_check": "CREATE_COMPLETE",
   "observability_check": "functional_test assertion 'order_created' (POST /orders returns 201) fails; Lambda logs show ResourceNotFoundException for the wrong secret ARN",
   "observable_symptom": "POST /orders returns 500 on every request. Lambda logs show a ResourceNotFoundException when attempting to retrieve the database credentials — the secret ARN in the Lambda environment does not correspond to any existing secret. The IAM role has correct GetSecretValue permissions and a valid secret with correct credentials does exist in the account.",
-  "root_cause": "The Lambda function's DB_SECRET_ARN environment variable points to a nonexistent secret ARN ('ace-bench-stack-db-secret-wrong') instead of the actual deployed secret. Secrets Manager raises ResourceNotFoundException on every invocation before a database connection is attempted.",
+  "root_cause": "PRIMARY FAULT (the one to identify): the Lambda function's DB_SECRET_ARN environment variable points to a nonexistent secret ARN ('ace-bench-stack-db-secret-wrong') instead of the actual deployed secret (!Ref DbSecret). Secrets Manager raises ResourceNotFoundException on every invocation before a database connection is attempted. SCENARIO SETUP (not the fault to identify): the ApiHandlerRole secretsmanager:GetSecretValue Resource was deliberately widened from !Ref DbSecret to '*' so that the wrong-ARN lookup returns ResourceNotFoundException instead of AccessDeniedException; this makes the credentials fault behaviorally distinct from the IAM-permission fault (arch03_fault02_security). The IAM widening is intentional test scaffolding and is NOT itself a fault to find — the minimal correct fix is restoring DB_SECRET_ARN.",
   "corpus_path": "corpus/arch_03_serverless_api_with_rds_postgres",
   "functional_test_path": "corpus/arch_03_serverless_api_with_rds_postgres/functional_test.py",
   "known_good_path": "corpus/arch_03_serverless_api_with_rds_postgres/known_good.yaml"

@@ -88,7 +88,7 @@ Resources:
   DbParameterGroup:
     Type: AWS::RDS::DBParameterGroup
     Properties:
-      Description: Parameter group for arch02 OrdersDb
+      Description: Parameter group for arch03 OrdersDb
       Family: postgres15
       Parameters:
         max_connections: '100'
