@@ -17,7 +17,7 @@ The chosen family is **RDS / Aurora**, selected for the highest LocalStack
 Ultimate emulation fidelity (RDS is backed by real PostgreSQL/MySQL) and the
 richest set of realistic, real-AWS-transferable fault classes that arch01 cannot
 express: VPC/security-group connectivity, Secrets Manager credentials, DB
-parameter groups, and data-tier security exposure.
+parameter groups, and KMS key-policy / encryption scope.
 
 This is **Phase 2B-1** — the first of several breadth families, each its own
 spec → plan → corpus build. It is scoped as a single implementation plan.
@@ -62,6 +62,8 @@ simplest to provision.
 - `AWS::EC2::VPC`, `AWS::EC2::Subnet` (private), `AWS::EC2::SecurityGroup`
 - Lambda `VpcConfig` (attaches handlers to the VPC/subnets/SG)
 - `AWS::SecretsManager::Secret` (DB master credentials)
+- `AWS::KMS::Key` (customer-managed CMK encrypting the credentials secret; the
+  key policy / grants are the subject of the security fault)
 
 **Handler dependency:** handlers vendor `psycopg2` (the same vendoring pattern
 arch01 uses for `aws_xray_sdk`) and read credentials from Secrets Manager at
@@ -82,12 +84,25 @@ layout. Each manifest's `optimal_tool_calls` / `optimal_files_changed` /
 | ID | Class | Injected fault | Optimal diagnosis path |
 |----|-------|----------------|------------------------|
 | `arch02_fault01_connectivity` | connectivity | Security group missing ingress on 5432 (primary); Lambda detached from VPC (fallback if SG not enforced) | `ace_describe_security_group` + `ace_check_db_connectivity` |
-| `arch02_fault02_security` | security | `PubliclyAccessible: true` and/or `0.0.0.0/0` SG ingress | `ace_describe_db_instance` + `ace_describe_security_group` |
+| `arch02_fault02_security` | security | DB-credentials secret is encrypted with a customer-managed KMS CMK, but the Lambda execution role / key policy lacks `kms:Decrypt` on that key (the secret ARN is correct and `GetSecretValue` is allowed — only Decrypt is the gap) | logs (KMS `AccessDeniedException`) + `ace_describe_kms_key` + `ace_simulate_policy` |
 | `arch02_fault03_credentials` | credentials | Wrong secret ARN wired to Lambda, or missing `secretsmanager:GetSecretValue` IAM permission | `ace_describe_secret` / `ace_get_secret` + `ace_simulate_policy` + logs |
 | `arch02_fault04_performance` | performance | Parameter-group `max_connections` too low → connection exhaustion (primary); undersized instance class + CloudWatch signal (fallback) | `ace_describe_db_parameters` + `ace_get_metric_statistics` |
 
 Scope is deliberately **4 scenarios** for the first build; expansion (more faults
 per class, async hops) is deferred to later 2B work.
+
+**Fault design principle (mandatory, mirrors arch01).** Every fault must produce
+an **observable behavioral symptom** that Pass-1 functional verification detects;
+`scenario.md` states only that *symptom*, never the cause. A pure
+posture/best-practice violation that does not break behavior (e.g.
+`PubliclyAccessible: true`, an over-broad `0.0.0.0/0` ingress) is **not** an
+acceptable fault here — it leaves the agent with nothing to diagnose unless the
+answer is revealed, and Pass-1 passes before and after the "fix". The security
+fault therefore manifests as broken behavior (a KMS `Decrypt` failure), with its
+security character carried by the **root cause** and by `invalid_patches` that
+forbid the insecure shortcut — exactly the `arch01_fault06_security` pattern
+(valid fix = least-privilege scope; invalid = disable encryption, `kms:*` on `*`,
+or a wildcard key-policy principal).
 
 ---
 
@@ -95,8 +110,10 @@ per class, async hops) is deferred to later 2B work.
 
 Most of the diagnostic surface already exists and is reused as-is:
 `ace_describe_security_group`, `ace_describe_secret` / `ace_get_secret`,
+`ace_describe_kms_key` (key policy/grants for the security fault),
 `ace_get_iam_role` / `ace_simulate_policy`, and the CloudWatch tools
-(`ace_get_metric_statistics`, `ace_get_lambda_metrics`).
+(`ace_get_metric_statistics`, `ace_get_lambda_metrics`). The security fault
+needs **no new tool** — `ace_describe_kms_key` already exists.
 
 Net-new tools, added in a new `harness/mcp_server/tools/probe_rds.js` and spread
 into `index.js` alongside the existing tool arrays:
@@ -136,6 +153,10 @@ The spike must confirm:
 3. **Parameter enforcement (key risk).** `DescribeDBParameters` works **and a
    lowered `max_connections` is actually enforced** (connections beyond the limit
    are refused). This is the performance fault's premise.
+4. **KMS Decrypt enforcement (key risk).** A secret encrypted with a customer
+   CMK is retrievable when the role has `kms:Decrypt`, **and retrieval fails with
+   an `AccessDeniedException` when the role/key policy lacks it** (under
+   `ENFORCE_IAM=1`). This is the security fault's premise.
 
 **Explicit fallbacks (carried, not improvised):**
 - If SG/VPC reachability is not enforced → `arch02_fault01` uses a mechanism
@@ -145,9 +166,13 @@ The spike must confirm:
   instance-class/CloudWatch-observable performance mechanism instead, keeping the
   performance class represented.
 
-The security and credentials faults (02, 03) depend only on attribute
-inspection and IAM/Secrets behavior already validated on this build, so they
-carry low spike risk.
+The credentials fault (03) depends only on IAM/Secrets behavior already
+validated on this build, so it carries low spike risk. The security fault (02)
+adds the KMS-Decrypt-enforcement check above; if LocalStack does not enforce
+`kms:Decrypt` under IAM enforcement, the fallback is to relocate the missing
+permission to `secretsmanager:GetSecretValue` on the role while keeping the
+secret-encryption framing (the symptom and diagnosis path are equivalent), or to
+fold the security class into the credentials scenario and drop to 3 scenarios.
 
 ---
 
