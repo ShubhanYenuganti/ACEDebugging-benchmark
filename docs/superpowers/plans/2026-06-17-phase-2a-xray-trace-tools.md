@@ -544,7 +544,7 @@ So the trace tools are not empty during existing arch01 scenario runs. Their `op
 **Interfaces:**
 - Consumes: the instrumented corpus handlers + `xray_instrument.py` from Task 3.
 
-- [ ] **Step 1: Sync instrumented handler code + vendored deps into each scenario**
+- [x] **Step 1: Sync instrumented handler code + vendored deps into each scenario**
 
 For each `scenarios/arch01_fault*` directory, copy the instrumented + vendored handler packages from the corpus, preserving any scenario-specific handler fault. Use a guarded copy that overwrites handler code but is reviewed against each scenario's fault_manifest for handler-level faults:
 
@@ -564,11 +564,11 @@ echo "synced shared module + vendored SDK into scenario handler dirs"
 
 Then, for each scenario, apply the `@traced(...)` decorator + import to the scenario's handler `index.py` files **unless** that handler carries the scenario's injected fault (check `fault_manifest.json` `target_resource`/`root_cause`); for a faulted handler, add instrumentation without altering the fault.
 
-- [ ] **Step 2: Add TracingConfig + X-Ray IAM perms to each scenario template**
+- [x] **Step 2: Add TracingConfig + X-Ray IAM perms to each scenario template**
 
 For each `scenarios/arch01_fault*/faulted.yaml` (and `faulted_annotated.yaml`), apply the same `TracingConfig: Mode: Active` on the six functions and `xray:PutTraceSegments`/`xray:PutTelemetryRecords` on the roles as in Task 3 — **without** touching the injected fault property recorded in that scenario's `fault_manifest.json`.
 
-- [ ] **Step 3: Lint all modified templates**
+- [x] **Step 3: Lint all modified templates**
 
 ```bash
 python -c "from harness.shared.cfn_lint_runner import run_lint; import glob,sys; [print(p, run_lint(p)) for p in glob.glob('scenarios/arch01_fault*/faulted.yaml')]"
@@ -576,14 +576,14 @@ python -c "from harness.shared.cfn_lint_runner import run_lint; import glob,sys;
 
 Expected: no lint errors introduced (warnings unchanged from baseline).
 
-- [ ] **Step 4: Spot-check one scenario still reproduces its fault**
+- [x] **Step 4: Spot-check one scenario still reproduces its fault**
 
 Pick `scenarios/arch01_fault01_connectivity`. Deploy it and confirm its observable symptom still occurs (instrumentation did not mask the fault). Use the harness scenario runner or `validate_deploy.py` on the faulted template, then its observability check.
 
 Run: `python harness/run.py scenarios/arch01_fault01_connectivity/ --model <noop or dry-run path>` if a dry-run mode exists; otherwise deploy `faulted.yaml` via `validate_deploy.py` and assert `accept_terminal_state` still fails.
 Expected: the fault still reproduces (`accept_terminal_state` fails as recorded in the manifest), proving instrumentation is fault-transparent.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scenarios/arch01_fault*/deployment/ scenarios/arch01_fault*/faulted.yaml scenarios/arch01_fault*/faulted_annotated.yaml
