@@ -3,6 +3,7 @@ import time
 
 import boto3
 from botocore.exceptions import ClientError
+from xray_instrument import traced
 
 table = boto3.resource("dynamodb").Table(os.environ["FRIEND_TABLE"])
 
@@ -31,6 +32,7 @@ def _create_pending(requester_id, receiver_id, timestamp):
             raise
 
 
+@traced("RequestStateHandlerFunction")
 def handler(event, context):
     timestamp = int(time.time() * 1000)
     failures = []
