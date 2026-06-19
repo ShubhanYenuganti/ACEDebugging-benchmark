@@ -720,10 +720,10 @@ Fault01 (connectivity) will use the wrong-endpoint fallback: inject a wrong `DB_
 - `ALTER SYSTEM SET max_connections = 3; SELECT pg_reload_conf()` succeeded but `SHOW max_connections` remained `100` — parameter did not take effect without a restart.
 - Opened 20 concurrent psycopg2 connections: all succeeded. LocalStack does not enforce `max_connections` limits at the connection layer.
 
-**Locked decision — fault04 mechanism: FALLBACK.**
-Fault04 (performance) will use the instance-class fallback: downgrade `DBInstanceClass` from `db.t3.micro` to `db.t3.nano` (or equivalent smallest class). The behavioral symptom will be observable as high query latency / slow response in the functional test (Lambda handler reports latency > threshold). The injected property is `AWS::RDS::DBInstance > Properties > DBInstanceClass`, `original_value: "db.t3.micro"`, `injected_value: "db.t3.nano"`.
+**Locked decision — fault04 mechanism: REVISED in Follow-up Gap A (below).**
+The instance-class downgrade considered here was REJECTED in the follow-up analysis — LocalStack does not emulate compute, so `DBInstanceClass` produces no latency difference (posture-only = forbidden). The **revised locked mechanism is Lambda `Timeout` too low** (`30 → 1`). See "Follow-up — Gap A: fault04 reproducibility".
 
-> Note: An alternative fallback is to set `max_connections` to a very low value in the parameter group AND require a reboot to apply it; but since LocalStack does not honor the parameter even after `pg_reload_conf`, this is unreliable. The instance-class fallback is the cleaner signal.
+> Note: setting `max_connections` low in the parameter group is also dead — LocalStack does not honor it even after `pg_reload_conf` and it is `pending-reboot`. No RDS-side performance mechanism is reproducible on this build.
 
 ### Check 4 — KMS `kms:Decrypt` enforcement (Step 4 probe 3)
 
@@ -747,14 +747,41 @@ Fault02 (security) will remove `secretsmanager:GetSecretValue` from `ApiHandlerR
 **Locked decision — arch02 X-Ray instrumentation: INSTRUMENT.**
 The arch02 Lambda handler will wrap its psycopg2 connection in `XRayTracedConn` (not `patch_all`) and use `xray_recorder.in_segment` / `xray_recorder.in_subsegment` for DB calls. This produces diagnosable SQL subsegments visible via `ace_get_trace`. No new MCP tool needed (existing `ace_get_trace` / `ace_get_trace_summaries` cover it).
 
-### Summary — locked fault mechanisms for Tasks 3–4
+### Summary — locked fault mechanisms for Tasks 3–4 (final, incl. follow-up)
 
-| Fault | Class | Primary (not enforced) | **Locked mechanism** |
+| Fault | Class | **Locked mechanism** | Confirmed error/symptom |
 |---|---|---|---|
-| fault01 | connectivity | SG ingress removal (NOT enforced) | **Wrong `DB_PORT` env var on Lambda (5433 instead of 5432)** |
-| fault02 | security | `kms:Decrypt` removal (NOT enforced) | **Remove `secretsmanager:GetSecretValue` from `ApiHandlerRole`** |
-| fault03 | credentials | N/A (always fallback) | **Wrong `DB_SECRET_ARN` env var on Lambda** |
-| fault04 | performance | `max_connections` param (NOT enforced) | **Downgrade `DBInstanceClass` to smallest available** |
+| fault01 | connectivity | **Wrong `DB_PORT` env var on Lambda (`5432 → 5433`)** | connection refused → 500 |
+| fault02 | security | **Remove `secretsmanager:GetSecretValue` from `ApiHandlerRole`** | `AccessDeniedException` → 500 |
+| fault03 | credentials | **Wrong/nonexistent `DB_SECRET_ARN` env var on Lambda** | `ResourceNotFoundException` → 500 |
+| fault04 | performance | **Lambda `Timeout` too low (`30 → 1`)** | `Task timed out after 1.00 seconds` → 502/timeout |
+
+---
+
+## Task 1 findings — Follow-up (Gap A & Gap B)
+
+> Recorded 2026-06-19, post-spike. Closed two reproducibility gaps before corpus build. Script: `scratch/spike_gaps.mjs` (gitignored). All provisioned resources torn down + verified clean (`lambda/iam/secretsmanager/cloudformation list` filtered `spike*` → empty).
+
+### Follow-up — Gap A: fault04 reproducibility
+
+**Problem:** the originally-locked `DBInstanceClass` downgrade is unreproducible — LocalStack does not emulate compute, so a smaller class shares the same single Postgres container and produces no latency difference (posture-only fault = forbidden).
+
+- **A.1 `DBInstanceClass` latency — CONFIRMED DEAD.** One real Postgres container backs all RDS instances regardless of class; class is metadata only. No measurable `db.t3.micro` vs `db.t3.nano` latency difference. Rejected.
+- **A.2 Lambda `Timeout` enforcement — ENFORCED ✓.** Deployed `spike-timeout-fn` (python3.11, `Timeout: 1`, handler sleeps N seconds). Invoke `{sleep: 3}` → `StatusCode: 200`, `FunctionError: Unhandled`, payload `{"errorMessage":"... Task timed out after 1.00 seconds"}`, elapsed ~2.9s. Control invoke `{sleep: 0}` → no error, normal payload. LocalStack genuinely terminates at the configured timeout.
+
+**Locked decision — fault04 mechanism (REVISED): Lambda `Timeout` too low.**
+`target_resource: ApiHandlerFunction`, `target_property: Properties.Timeout`, `original_value: 30`, `injected_value: 1`. Class remains **performance**. Symptom: the DB connect+query round-trip exceeds the 1s timeout → request times out (502/timeout) → Pass-1 functional test fails. Fix = raise `Timeout`.
+
+> Task 3/4 requirement: the handler's normal round-trip must exceed the injected `Timeout: 1` (open a fresh connection per invocation so connect+query cost is incurred) yet fit comfortably within the known-good `Timeout: 30`. Task 4 must verify the reproduction empirically.
+
+### Follow-up — Gap B: fault02 vs fault03 error-signature distinction
+
+Both faults manifest as "handler can't get DB credentials," so they must produce distinct error signatures to be genuinely different exercises. Confirmed empirically:
+
+- **fault02** (role lacks `secretsmanager:GetSecretValue`, secret exists): `GetSecretValue` → **`AccessDeniedException`** (HTTP 400, "...is not authorized to perform: secretsmanager:GetSecretValue...because no identity-based policy allows...").
+- **fault03** (caller has permission, secret ARN wrong/nonexistent): `GetSecretValue` → **`ResourceNotFoundException`** (HTTP 400, "Secrets Manager can't find the specified secret.").
+
+**DISTINCT ✓** — authorization failure vs lookup failure; different exception names, messages, and required fixes (fix role policy vs fix `DB_SECRET_ARN`). fault03's locked mechanism (wrong `DB_SECRET_ARN`) stands unchanged.
 
 ---
 
