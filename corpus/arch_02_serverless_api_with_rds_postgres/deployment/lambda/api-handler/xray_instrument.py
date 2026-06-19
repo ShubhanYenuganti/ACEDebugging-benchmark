@@ -1,4 +1,4 @@
-"""Shared X-Ray instrumentation for arch01 handlers.
+"""Shared X-Ray instrumentation for ACE-Bench Lambda handlers.
 
 Begins an explicit segment (LocalStack provides no Lambda facade segment),
 patches boto3 so downstream calls become subsegments, and emits each finished

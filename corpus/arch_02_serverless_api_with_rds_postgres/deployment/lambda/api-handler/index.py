@@ -48,7 +48,7 @@ def _open_conn():
     secret = _get_secret()
     raw_conn = psycopg2.connect(
         host=os.environ["DB_HOST"],
-        port=int(os.environ.get("DB_PORT", "5432")),
+        port=int(os.environ["DB_PORT"]),
         dbname=os.environ.get("DB_NAME", "postgres"),
         user=secret["username"],
         password=secret["password"],
