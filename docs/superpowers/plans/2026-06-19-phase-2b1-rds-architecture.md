@@ -675,6 +675,89 @@ git commit -m "docs: document arch02 RDS architecture and RDS MCP tools (61 tool
 
 ---
 
+## Task 1 findings
+
+> Recorded 2026-06-19. LocalStack Pro 2026.5.4:6e0208279, edition=pro, IAM enforcement active (`ENFORCE_IAM=1 IAM_SOFT_MODE=0`).
+> Spike stack: `ace-bench-spike-rds` (CFN), torn down after checks. Scripts in `scratch/` (gitignored).
+
+### Check 1 — Provisioning (Step 3)
+
+**Result: PASS — all attributes populated.**
+
+Stack reached `CREATE_COMPLETE` in ~40 s. RDS instance `spike-rds-instance` reached `available` immediately. `DescribeDBInstances` returned all expected attributes:
+
+| Attribute | Value observed | Populated? |
+|---|---|---|
+| `Endpoint.Address` | `localhost.localstack.cloud` | ✓ |
+| `Endpoint.Port` | `4510` | ✓ |
+| `PubliclyAccessible` | `false` | ✓ |
+| `StorageEncrypted` | `true` | ✓ |
+| `KmsKeyId` | UUID (CMK) | ✓ |
+| `VpcSecurityGroups` | `[{sg-…, active}]` | ✓ |
+| `DBParameterGroups` | `[{name, in-sync}]` | ✓ |
+| `DBSubnetGroup` | subnet group name | ✓ |
+| `EngineVersion` | `15` | ✓ |
+
+All MCP tool attributes (needed by `ace_describe_db_instance` / Task 2 tools) are present.
+
+### Check 2 — SG/VPC reachability enforcement (Step 4 probe 1)
+
+**Result: NOT ENFORCED.**
+
+- Good SG (tcp/5432 ingress from VPC CIDR): TCP connect to `localhost.localstack.cloud:4510` → `connected=true`.
+- Blocked SG (no ingress): `ModifyDBInstance` applied the new SG (`DescribeDBInstances` confirmed the change), then TCP connect → **still `connected=true`**.
+- LocalStack does not enforce EC2 security group rules for RDS TCP reachability; the endpoint is always accessible regardless of SG config.
+
+**Locked decision — fault01 mechanism: FALLBACK.**
+Fault01 (connectivity) will use the wrong-endpoint fallback: inject a wrong `DB_PORT` environment variable (e.g. `5433`) into the Lambda handler. This produces a genuine connection-refused symptom that Pass-1 functional verification detects. The injected property is `AWS::Lambda::Function > Properties > Environment > Variables > DB_PORT`, `original_value: "5432"`, `injected_value: "5433"`.
+
+### Check 3 — `max_connections` enforcement (Step 4 probe 2)
+
+**Result: NOT ENFORCED.**
+
+- Parameter group contained `max_connections=100` with `ApplyMethod: pending-reboot`.
+- `SHOW max_connections` from psycopg2 session: `100`.
+- `ALTER SYSTEM SET max_connections = 3; SELECT pg_reload_conf()` succeeded but `SHOW max_connections` remained `100` — parameter did not take effect without a restart.
+- Opened 20 concurrent psycopg2 connections: all succeeded. LocalStack does not enforce `max_connections` limits at the connection layer.
+
+**Locked decision — fault04 mechanism: FALLBACK.**
+Fault04 (performance) will use the instance-class fallback: downgrade `DBInstanceClass` from `db.t3.micro` to `db.t3.nano` (or equivalent smallest class). The behavioral symptom will be observable as high query latency / slow response in the functional test (Lambda handler reports latency > threshold). The injected property is `AWS::RDS::DBInstance > Properties > DBInstanceClass`, `original_value: "db.t3.micro"`, `injected_value: "db.t3.nano"`.
+
+> Note: An alternative fallback is to set `max_connections` to a very low value in the parameter group AND require a reboot to apply it; but since LocalStack does not honor the parameter even after `pg_reload_conf`, this is unreliable. The instance-class fallback is the cleaner signal.
+
+### Check 4 — KMS `kms:Decrypt` enforcement (Step 4 probe 3)
+
+**Result: NOT ENFORCED.**
+
+- Created IAM role `spike-no-decrypt-role` with ONLY `secretsmanager:GetSecretValue` (no `kms:Decrypt` on the CMK).
+- Assumed the role; used temp credentials to call `GetSecretValue` on the CMK-encrypted secret.
+- Result: **SUCCESS** — secret returned without error. LocalStack does not enforce `kms:Decrypt` as a prerequisite for SecretsManager decryption under IAM enforcement (`ENFORCE_IAM=1`).
+
+**Locked decision — fault02 mechanism: FALLBACK.**
+Fault02 (security) will remove `secretsmanager:GetSecretValue` from `ApiHandlerRole` entirely. The Lambda handler will receive `AccessDeniedException` from Secrets Manager (which LocalStack *does* enforce for IAM), preventing DB credential retrieval and causing a functional test failure. The injected change is removing the `secretsmanager:GetSecretValue` action from `ApiHandlerRole`'s inline policy, `target_resource: ApiHandlerRole`, `target_property: inline policy`, `original_value: allows GetSecretValue`, `injected_value: GetSecretValue removed`.
+
+### Check 5 — psycopg2 / X-Ray subsegment capture (Step 5)
+
+**Result: WORKS with `XRayTracedConn` wrapper.**
+
+- `aws_xray_sdk` 2.15.0 installed. `aws_xray_sdk.ext.dbapi2` does NOT expose a `patch()` function or `XRayConnection` — the correct API is `XRayTracedConn` (wraps a psycopg2 connection) and `XRayTracedCursor`.
+- Test: wrapped a live psycopg2 connection in `XRayTracedConn`, ran `SELECT 1 + 1` inside `xray_recorder.in_segment(...)`. Segment serialization showed **1 SQL subsegment** with `name=spike-db`, `sql={'database_type': 'PostgreSQL'}`.
+- The `ace_get_trace` X-Ray tool already exists in `harness/mcp_server/tools/observe_tracing.js`. Capturing SQL subsegments is feasible.
+
+**Locked decision — arch02 X-Ray instrumentation: INSTRUMENT.**
+The arch02 Lambda handler will wrap its psycopg2 connection in `XRayTracedConn` (not `patch_all`) and use `xray_recorder.in_segment` / `xray_recorder.in_subsegment` for DB calls. This produces diagnosable SQL subsegments visible via `ace_get_trace`. No new MCP tool needed (existing `ace_get_trace` / `ace_get_trace_summaries` cover it).
+
+### Summary — locked fault mechanisms for Tasks 3–4
+
+| Fault | Class | Primary (not enforced) | **Locked mechanism** |
+|---|---|---|---|
+| fault01 | connectivity | SG ingress removal (NOT enforced) | **Wrong `DB_PORT` env var on Lambda (5433 instead of 5432)** |
+| fault02 | security | `kms:Decrypt` removal (NOT enforced) | **Remove `secretsmanager:GetSecretValue` from `ApiHandlerRole`** |
+| fault03 | credentials | N/A (always fallback) | **Wrong `DB_SECRET_ARN` env var on Lambda** |
+| fault04 | performance | `max_connections` param (NOT enforced) | **Downgrade `DBInstanceClass` to smallest available** |
+
+---
+
 ## Self-Review Notes (author)
 
 - **Spec coverage:** Architecture → Task 3; fault set (4 classes, behavior-manifesting) → Task 4; new MCP tools (3, no new tool for security) → Task 2; KMS security redesign → Task 4 Step 3 + manifest invalid_patches; de-risking spike incl. KMS + psycopg2/X-Ray probe → Task 1; X-Ray-instrumentation-decided-by-spike → Task 1 Step 5/6; testing & sequencing + docs → Tasks 2/3/4/5. All spec sections map to a task.
