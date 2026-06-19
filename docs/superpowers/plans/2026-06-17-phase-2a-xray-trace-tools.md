@@ -603,15 +603,15 @@ A new fault whose fastest diagnosis runs through the trace tools: a downstream c
 - Consumes: instrumented corpus handlers (Task 3); the trace tools (Task 1).
 - Produces: a scenario whose `fault_manifest.json.optimal_diagnostic_path` includes `ace_get_trace_summaries` then `ace_get_trace`.
 
-- [ ] **Step 1: Choose the fault (concrete)**
+- [x] **Step 1: Choose the fault (concrete)**
 
 Inject a wrong DynamoDB table name into one downstream handler's environment so its `PutItem`/`UpdateItem` subsegment faults with `ResourceNotFoundException`, while upstream segments succeed. Target: `RequestStateHandlerFunction.Properties.Environment.Variables.FRIEND_TABLE` set to a nonexistent table name (original: the `!Ref FriendTable` value). This is a clean CFN property mutation; the receiver-side reciprocal record is never written, and the trace shows exactly which hop/operation faulted.
 
-- [ ] **Step 2: Create the faulted template + scenario from the instrumented corpus**
+- [x] **Step 2: Create the faulted template + scenario from the instrumented corpus**
 
 Copy the instrumented arch01 `known_good.yaml` → `scenarios/arch01_fault11_data_correctness/faulted.yaml`, apply the env-var mutation, and create `faulted_annotated.yaml` marking the injected line. Copy the instrumented `deployment/lambda/` tree in. Write `scenario.md` describing the observable symptom (receiver never sees the incoming request after a Request action) without revealing the root cause.
 
-- [ ] **Step 3: Write fault_manifest.json**
+- [x] **Step 3: Write fault_manifest.json**
 
 ```json
 {
@@ -650,7 +650,7 @@ Copy the instrumented arch01 `known_good.yaml` → `scenarios/arch01_fault11_dat
 
 Replace `original_value` with the actual resolved table name used in known_good.yaml.
 
-- [ ] **Step 4: Validate the scenario reproduces and is trace-diagnosable**
+- [x] **Step 4: Validate the scenario reproduces and is trace-diagnosable**
 
 Deploy the faulted template, run traffic, and confirm:
 
@@ -662,11 +662,11 @@ python scripts/validate_xray_emission.py
 
 Expected: the `request_reciprocal_record` symptom reproduces, AND `ace_get_trace` on the faulted trace shows the `RequestStateHandlerFunction` segment with a faulted subsegment whose `aws_operation` is `PutItem`. If LocalStack does not capture the error inside the subsegment, fall back to making the faulted hop a *missing* expected subsegment (handler never reaches the write) and update the manifest's `optimal_diagnostic_path` accordingly.
 
-- [ ] **Step 5: Re-baseline optimal_tool_calls**
+- [x] **Step 5: Re-baseline optimal_tool_calls**
 
 Confirm the trace path (`ace_get_trace_summaries` → `ace_get_trace`) is genuinely 2 calls and shorter than the non-trace path (env-var inspection via `ace_get_environment_variables` + `ace_get_log_tail`). If the non-trace path is equal/shorter, adjust `optimal_tool_calls`/`optimal_diagnostic_path` to reflect the true minimum.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scenarios/arch01_fault11_data_correctness/
@@ -713,4 +713,5 @@ git commit -m "docs: document X-Ray trace tools and arch01 instrumentation (58 t
 - **Sequencing note:** the spec listed the emission gate as Step 1; this plan builds the tools first (Task 1) so they serve as the verification instrument for the gate (Task 2). Corpus fan-out (Tasks 3–5) still occurs only after the gate passes, preserving the spec's de-risking intent.
 - **Type consistency:** tool output keys (`traces`/`segments`/`subsegments`, `aws_operation`, `has_fault`/`fault`) are used identically in the tool code, tests, and validation script. `traced(name)` signature is consistent across Tasks 2–5.
 - **Known residual risk:** Task 5 Step 4 carries an explicit fallback if LocalStack does not capture errors inside subsegments — the only place the trace-diagnosable premise could break, gated by Task 2's subsegment-fidelity check.
+- **Task 5 finding (relevant to Task 6 docs + `ace_get_trace_summaries`):** On this LocalStack build, `GetTraceSummaries` does NOT implement the `FilterExpression` parameter (returns `{"error":"Not implemented yet - moto"}`), so the `only_errors=true` / `filter_expression` path of `ace_get_trace_summaries` is non-functional — it errors rather than filtering. LocalStack also does not propagate subsegment `fault`/`error` flags up to the summary level (`has_fault`/`has_error` are always `false` on summaries). Subsegment-level fault flags ARE correct via `ace_get_trace` (a failed DynamoDB call shows `error:true, fault:true, http_status:400` on its subsegment — this is how fault11 is diagnosed). So the working trace-diagnostic path is `ace_get_trace_summaries(window_minutes=...)` to list trace IDs, then `ace_get_trace(trace_id)` to read the faulted subsegment. Task 6 docs should note the `only_errors` limitation; consider softening the `ace_get_trace_summaries` tool description's `only_errors` claim.
 - **Task 2 finding (MANDATORY for Tasks 3–5):** LocalStack's Lambda detection sets the X-Ray recorder's `streaming_threshold` to `0`, which streams each subsegment out as an independent document the instant it closes — leaving the parent segment empty and making LocalStack flatten downstream calls into flat sibling segments that lose `aws_operation`. `xray_instrument.py` fixes this with `streaming_threshold=1000` (keep subsegments embedded) plus a `send_entity` guard that skips subsegment-type entities. The emission gate now passes the STRICT criterion: `ace_get_trace` on the front-handler trace returns `FrontHandlerFunction` with a nested `dynamodb` subsegment carrying `aws_operation=PutItem`. Tasks 3–5 must use this same `_shared/xray_instrument.py` unchanged. Note: `vendor_xray.sh` is non-deterministic about pulling `botocore` (Lambda runtime already provides it) — the committed front-handler intentionally vendors only `aws_xray_sdk`/`wrapt`/`six`, which is sufficient.
