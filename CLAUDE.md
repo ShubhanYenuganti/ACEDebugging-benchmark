@@ -1,5 +1,11 @@
 # ACE-Bench Harness
 
+## Subagent-Driven Development Model Preferences
+
+When using `superpowers:subagent-driven-development`:
+- **Worker subagents:** always use `claude-sonnet-4-6` (model: `sonnet`)
+- **Overseer:** always use `claude-opus-4-8` (model: `opus`)
+
 A benchmark for evaluating a model's ability to diagnose and fix intentionally broken cloud infrastructure. Supports any LLM provider via LiteLLM (Anthropic, OpenAI, Gemini, Ollama, etc.). Phases A→G are strictly sequential. Full spec: SPEC.md. Run guide: RUN.md.
 
 ---
